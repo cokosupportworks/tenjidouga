@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "展示動画プレイヤー",
+  "short_name": "展示動画プレイヤー",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "theme_color": "#101114",
+  "background_color": "#101114",
+  "icons": [
+    {
+      "src": "./apple-touch-icon.png",
+      "type": "image/png"
+    }
+  ]
+}
