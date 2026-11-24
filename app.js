@@ -1,12 +1,33 @@
 import { readVideos, addVideo, removeVideo, updateVideo, readPreference, writePreference } from './storage.js';
+import { parseTimecode, formatTimecode, playbackTiles, sequenceId, sequenceDuration, sequencePosition, sequenceSeek } from './clips.js';
 
 const $ = id => document.getElementById(id);
-const player = $('player');
+const inlinePlayer = $('player');
+let output = inlinePlayer;
+let player = inlinePlayer;
+let standby;
+let preloadedCut;
+let sequenceActive = false;
+let playIntent = 0;
+let changingCut = false;
+const playbackEvents = ['play', 'playing', 'pause', 'ended', 'timeupdate', 'durationchange', 'emptied', 'seeking', 'seeked', 'ratechange'];
 const preview = $('preview-video');
 const settings = $('settings-dialog');
 const rail = $('rail');
 const railTrack = $('rail-track');
-const defaults = { top: 4, width: 90, height: 100, x: 50, rail: 22, thumb: 150, railMode: 'even' };
+const defaults = {
+  top: 4, width: 90, height: 100, x: 50, rail: 22, thumb: 150, railMode: 'even',
+  controlsVisible: true, controlsPosition: 'bottom', gearVisible: true,
+};
+const pcDefaults = {
+  arrangement: 'grid', columns: 0, gridGap: 10, rail: 28, thumb: 150, railMode: 'even',
+  controlsVisible: true, controlsPosition: 'top', gearVisible: true,
+};
+const pcRailSpecs = [
+  ['rail', 'サムネイル帯の高さ', 14, 100, '%'],
+  ['thumb', 'サムネイルの幅', 70, 440, ' px'],
+];
+const pcGridSpecs = [['gridGap', 'グリッドの間隔', 0, 48, ' px']];
 const defaultGap = 9;
 const maxGap = 1000;
 const layoutSpecs = [
@@ -22,25 +43,70 @@ const objectSpecs = [['x', '横位置', 0, 100, '%'], ['y', '縦位置', 0, 100,
 const urls = new Map();
 let videos = [];
 let decorations = [];
-let layout = { ...defaults, gaps: {} };
+let layout = loadLayout();
+let layoutTarget = 'single';
 let currentId;
+let currentClipId;
+let clipEndTimer;
+let tileOrder = [];
+let clipDraft;
+let clipSavePending = false;
 let editorId;
 let objectId;
 let activeTab = 'library';
 let importBusy = false;
 let noticeTimer;
 let audioContext;
-let mainGain;
-let previewGain;
+const mediaGains = new WeakMap();
 let editorGeneration = 0;
 let pendingEditorPosition = null;
 let auditioning = false;
+let previewStopAt = null;
+let previewIntent = 0;
+let previewEndTimer;
 let ready = false;
+let projectionWindow;
+let projectionTimer;
+let projectionDeadline;
+let playbackPosition = 0;
 
 const current = () => videos.find(video => video.id === currentId);
+const activeClip = () => current()?.clips?.find(clip => clip.id === currentClipId);
+const tiles = () => playbackTiles(videos, tileOrder);
+const activeTileId = () => sequenceActive && current() ? sequenceId(current()) : (currentClipId ?? currentId);
+const transportPosition = () => sequenceActive ? sequencePosition(current()?.clips || [], activeClip(), player.currentTime) : player.currentTime;
 const edited = () => videos.find(video => video.id === editorId);
 const selectedObject = () => decorations.find(object => object.id === objectId);
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+
+function loadLayout(saved = {}) {
+  const { projection, projectionLayout, ...single } = saved;
+  return {
+    ...defaults, ...single, gaps: { ...single.gaps },
+    projection: {
+      ...pcDefaults,
+      arrangement: projectionLayout ?? pcDefaults.arrangement,
+      thumb: single.thumb ?? pcDefaults.thumb,
+      railMode: single.railMode ?? pcDefaults.railMode,
+      ...projection,
+      gaps: { ...(projection?.gaps ?? single.gaps) },
+    },
+  };
+}
+
+function screenLayout(projected) {
+  return projected ? layout.projection : layout;
+}
+
+function editingLayout() {
+  return screenLayout(layoutTarget === 'pc');
+}
+
+function gridDimensions(count, requestedColumns) {
+  const automatic = Math.min(6, Math.ceil(Math.sqrt(count)));
+  const columns = Math.max(1, Math.min(count, requestedColumns || automatic));
+  return { columns, rows: Math.max(1, Math.ceil(count / columns)) };
+}
 
 function urlFor(blob) {
   if (!blob) return '';
@@ -100,38 +166,37 @@ function storePreference(key, value) {
   return writePreference(key, value).catch(saveError);
 }
 
-function setupGain(media) {
-  const source = audioContext.createMediaElementSource(media);
-  const gain = audioContext.createGain();
-  source.connect(gain);
-  gain.connect(audioContext.destination);
-  return gain;
-}
-
-function enableAudio() {
-  const Audio = window.AudioContext || window.webkitAudioContext;
-  if (!Audio) return;
+function applyVolume(media, value) {
+  const volume = clamp(value / 100, 0, 1);
+  media.muted = !volume;
+  let gain = mediaGains.get(media);
   try {
-    audioContext ||= new Audio();
-    mainGain ||= setupGain(player);
-    previewGain ||= setupGain(preview);
-    if (audioContext.state !== 'running') audioContext.resume().catch(() => {});
+    media.volume = gain ? 1 : volume;
+    // Use the media element's own audio whenever the browser allows volume changes.
+    if (!gain && volume > 0 && Math.abs(media.volume - volume) > 0.001 && media.ownerDocument === document) {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (Audio) {
+        audioContext ||= new Audio();
+        const source = audioContext.createMediaElementSource(media);
+        gain = audioContext.createGain();
+        source.connect(gain);
+        gain.connect(audioContext.destination);
+        mediaGains.set(media, gain);
+      }
+    }
+    if (gain) {
+      gain.gain.value = volume;
+      if (audioContext.state !== 'running') audioContext.resume().catch(() => {});
+    }
   } catch {
-    // Where Web Audio is unavailable, use the media element's native controls.
+    // The system output volume remains available if the browser declines software volume.
   }
 }
 
-function applyVolume(media, gain, value) {
-  const volume = clamp(value / 100, 0, 1);
-  media.muted = !volume;
-  media.volume = gain ? 1 : volume;
-  if (gain) gain.gain.value = volume;
-}
-
-function renderRailSpacing(track) {
-  track.dataset.mode = layout.railMode;
+function renderRailSpacing(track, config) {
+  track.dataset.mode = config.railMode;
   Array.from(track.children).forEach((tile, index) => {
-    const gap = index === 0 ? 0 : (layout.gaps[tile.dataset.id] ?? defaultGap);
+    const gap = index === 0 ? 0 : (config.gaps[tile.dataset.id] ?? defaultGap);
     tile.style.setProperty('--tile-gap', gap + 'px');
   });
 }
@@ -139,21 +204,21 @@ function renderRailSpacing(track) {
 function renderRail() {
   const scroll = rail.scrollLeft;
   railTrack.replaceChildren();
-  for (const video of videos) {
-    const title = video.caption || video.name;
-    const tile = button(title, () => selectVideo(video), 'tile', '');
-    tile.title = title;
-    tile.dataset.id = video.id;
-    tile.setAttribute('aria-current', String(video.id === currentId));
-    const thumb = video.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
-    if (video.thumbnail) {
-      thumb.src = urlFor(video.thumbnail);
+  for (const entry of tiles()) {
+    const tile = button(entry.title, () => selectEntry(entry), 'tile', '');
+    tile.title = entry.title;
+    tile.dataset.id = entry.id;
+    tile.setAttribute('aria-current', String(entry.id === activeTileId()));
+    const thumb = entry.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
+    if (entry.thumbnail) {
+      thumb.src = urlFor(entry.thumbnail);
       thumb.alt = '';
     }
-    tile.append(thumb, element('span', 'caption', title));
+    tile.append(thumb, element('span', 'caption', entry.title));
     railTrack.append(tile);
   }
-  renderRailSpacing(railTrack);
+  renderTileOrder();
+  renderProjection();
   rail.scrollLeft = scroll;
   if (activeTab === 'layout') {
     renderRailSettings();
@@ -161,70 +226,282 @@ function renderRail() {
   }
 }
 
+function nextCut() {
+  if (!sequenceActive) return undefined;
+  const clips = current()?.clips || [];
+  const index = clips.findIndex(clip => clip.id === currentClipId);
+  return index >= 0 ? clips[index + 1] : undefined;
+}
+
+function wirePlayback(media, listen) {
+  for (const event of [...playbackEvents, 'loadedmetadata']) {
+    if (listen) media.addEventListener(event, updatePlayer);
+    else media.removeEventListener(event, updatePlayer);
+  }
+}
+
+function discardPreload() {
+  preloadedCut = undefined;
+  if (!standby) return;
+  standby.pause();
+  standby.removeAttribute('src');
+  standby.load();
+}
+
+async function positionMedia(media, position, valid) {
+  if (media.readyState < 1) await mediaEvent(media, 'loadedmetadata', 5000);
+  if (!valid()) return false;
+  if (!media.seeking && Math.abs(media.currentTime - position) < 0.002) return true;
+  const seek = mediaEvent(media, 'seeked', 5000);
+  if (Math.abs(media.currentTime - position) >= 0.002) media.currentTime = position;
+  await seek;
+  return valid();
+}
+
+function prepareNextCut() {
+  const next = nextCut();
+  const clip = activeClip();
+  const video = current();
+  if (!next || !video || Math.abs(next.start - clip.end) < 0.002) {
+    if (preloadedCut) discardPreload();
+    return;
+  }
+  if (preloadedCut?.id === next.id && preloadedCut.start === next.start) return;
+  if (!standby) {
+    standby = output.ownerDocument.createElement('video');
+    standby.className = 'standby-video';
+    standby.playsInline = true;
+    standby.preload = 'auto';
+    standby.setAttribute('disablepictureinpicture', '');
+    standby.setAttribute('aria-hidden', 'true');
+    standby.dataset.inactiveStream = '';
+    output.after(standby);
+  }
+  const media = standby;
+  const cut = { id: next.id, start: next.start, ready: false };
+  preloadedCut = cut;
+  const url = urlFor(video.file);
+  if (media.getAttribute('src') !== url) {
+    media.src = url;
+    media.load();
+  }
+  positionMedia(media, next.start, () => preloadedCut === cut).then(ready => {
+    if (preloadedCut === cut) cut.ready = ready;
+  }).catch(() => {});
+}
+
+function stopActive() {
+  playIntent += 1;
+  if (changingCut) standby?.pause();
+  changingCut = false;
+  player.pause();
+}
+
+async function advanceCut(next) {
+  const previous = player;
+  const token = ++playIntent;
+  changingCut = true;
+  previous.pause();
+  const prepared = preloadedCut?.id === next.id && preloadedCut.start === next.start && preloadedCut.ready ? standby : null;
+  if (prepared) {
+    try {
+      applyVolume(prepared, current().volume);
+      await prepared.play();
+      if (token !== playIntent) {
+        if (prepared !== player) prepared.pause();
+        return;
+      }
+      wirePlayback(previous, false);
+      previous.dataset.inactiveStream = '';
+      delete prepared.dataset.inactiveStream;
+      player = prepared;
+      standby = previous;
+      preloadedCut = undefined;
+      wirePlayback(player, true);
+      currentClipId = next.id;
+      changingCut = false;
+      prepareNextCut();
+      updatePlayer();
+      return;
+    } catch {
+      if (prepared !== player) prepared.pause();
+    }
+  }
+  if (token !== playIntent) return;
+  currentClipId = next.id;
+  await startAt(next.start, true);
+}
+
+function clipBoundary() {
+  clearTimeout(clipEndTimer);
+  const clip = activeClip();
+  if (!clip || changingCut || (player.paused && !player.ended) || player.seeking || !Number.isFinite(player.duration)) return;
+  const end = Math.min(clip.end, player.duration);
+  const remaining = end - player.currentTime;
+  if (remaining <= 0) {
+    const next = nextCut();
+    if (next && Math.abs(next.start - end) < 0.002 && player.currentTime < next.end) {
+      currentClipId = next.id;
+      prepareNextCut();
+    } else if (next) {
+      advanceCut(next);
+    } else {
+      player.pause();
+      if (player.currentTime > end) player.currentTime = end;
+    }
+    return;
+  }
+  if (remaining <= 1) {
+    clipEndTimer = setTimeout(updatePlayer, Math.max(20, remaining * 1000 / Math.max(0.01, player.playbackRate)));
+  }
+}
+
+function clearPlayback() {
+  clearTimeout(clipEndTimer);
+  stopActive();
+  discardPreload();
+  currentId = currentClipId = undefined;
+  sequenceActive = false;
+  playbackPosition = 0;
+  player.removeAttribute('src');
+  player.load();
+}
+
 function updatePlayer() {
+  clipBoundary();
   const hasVideo = Boolean(current());
   const duration = Number.isFinite(player.duration) ? player.duration : 0;
   const position = player.currentTime || 0;
-  const isPlaying = hasVideo && !player.paused && !player.ended;
+  if (duration) playbackPosition = position;
+  const isPlaying = hasVideo && (changingCut || (!player.paused && !player.ended));
   $('empty').hidden = hasVideo;
-  $('empty-title').textContent = videos.length ? '動画を選択' : '動画がありません';
-  $('empty-text').textContent = videos.length ? '下のサムネイルをタップして再生' : '設定から動画を追加してください';
-  $('elapsed').textContent = time(position);
-  $('duration').textContent = time(duration);
-  $('timeline').max = duration || 1;
-  $('timeline').value = position;
-  $('timeline').disabled = !duration;
-  $('back').disabled = !duration;
-  $('forward').disabled = !duration;
+  const hasTiles = railTrack.children.length > 0;
+  $('empty-title').textContent = hasTiles ? '動画を選択' : '表示するサムネイルがありません';
+  $('empty-text').textContent = hasTiles ? 'サムネイルをタップして再生' : '設定からサムネイルを追加してください';
+  const clip = activeClip();
+  const displayPosition = transportPosition();
+  $('elapsed').textContent = clip ? formatTimecode(Math.round(displayPosition * 10) / 10) : time(position);
+  const start = sequenceActive ? 0 : (clip?.start ?? 0);
+  const end = sequenceActive ? sequenceDuration(current()?.clips || []) : (duration ? Math.min(clip?.end ?? duration, duration) : 0);
+  $('duration').textContent = clip ? formatTimecode(end) : time(end);
+  $('timeline').min = start;
+  $('timeline').max = end || start + 1;
+  $('timeline').value = clamp(displayPosition, start, end || start + 1);
+  $('timeline').disabled = !end;
+  $('back').disabled = !end;
+  $('forward').disabled = !end;
   $('toggle').disabled = !hasVideo;
   const playLabel = isPlaying ? '一時停止' : '再生';
   $('toggle').setAttribute('aria-label', playLabel);
   $('toggle').title = playLabel;
   $('toggle').firstElementChild.classList.toggle('pause', isPlaying);
   for (const tile of rail.querySelectorAll('.tile')) {
-    tile.setAttribute('aria-current', String(tile.dataset.id === currentId));
+    tile.setAttribute('aria-current', String(tile.dataset.id === activeTileId()));
   }
 }
 
 function playMain() {
   const video = current();
   if (!video) return;
-  enableAudio();
-  applyVolume(player, mainGain, video.volume);
-  player.play().catch(error => {
-    if (currentId === video.id && error.name !== 'AbortError') notify('再生できませんでした。再生ボタンでもう一度お試しください。');
+  const target = player;
+  const clip = activeClip();
+  if (clip && (target.currentTime < clip.start - 0.002 || target.currentTime >= clip.end)) {
+    if (sequenceActive && target.currentTime >= clip.end) currentClipId = (nextCut() ?? video.clips[0]).id;
+    startAt(activeClip().start, true);
+    return;
+  }
+  applyVolume(target, video.volume);
+  const intent = playIntent;
+  target.play().then(() => {
+    if (player === target && playIntent === intent && !target.paused) prepareNextCut();
+  }).catch(error => {
+    if (player !== target || playIntent !== intent || error.name === 'AbortError') return;
+    if (error.name === 'NotAllowedError') {
+      notify('開始位置を準備しました。もう一度サムネイルか再生ボタンを押してください。');
+    } else {
+      notify('再生できませんでした。もう一度サムネイルを選んでください。');
+    }
   });
 }
 
-function selectVideo(video) {
-  if (currentId === video.id) {
+async function startAt(position, resume) {
+  const target = player;
+  const token = ++playIntent;
+  changingCut = resume;
+  target.pause();
+  try {
+    if (target.readyState < 1 || target.seeking || Math.abs(target.currentTime - position) >= 0.002) {
+      if (!await positionMedia(target, position, () => playIntent === token && player === target)) return;
+    }
+    if (playIntent !== token) return;
+    changingCut = false;
+    if (resume) playMain();
+    updatePlayer();
+  } catch {
+    if (playIntent !== token) return;
+    changingCut = false;
+    updatePlayer();
+    notify('開始位置を読み込めませんでした。もう一度サムネイルを選んでください。');
+  }
+}
+
+function selectEntry({ video, clip, id, sequence }) {
+  const previous = current();
+  if (!clip && activeTileId() === id) {
     if (player.ended) player.currentTime = 0;
     if (player.paused) playMain();
     return;
   }
-  const previous = current();
   stopAudition();
-  player.pause();
+  stopActive();
+  discardPreload();
   currentId = video.id;
-  player.src = urlFor(video.file);
-  if (previous && previous.id !== editorId) releaseUrl(previous.file);
-  playMain();
+  currentClipId = clip?.id;
+  sequenceActive = Boolean(sequence);
+  playbackPosition = clip?.start ?? 0;
+  if (previous !== video) {
+    player.src = urlFor(video.file);
+    player.load();
+    if (previous && previous.id !== editorId) releaseUrl(previous.file);
+  }
+  if (clip && (clip.start > 0 || player.currentTime > 0.002 || player.seeking)) {
+    startAt(clip.start, true);
+  } else {
+    if (previous === video && player.currentTime !== 0) player.currentTime = 0;
+    playMain();
+  }
   updatePlayer();
 }
 
 function seekMain(position) {
-  if (Number.isFinite(player.duration)) player.currentTime = clamp(position, 0, player.duration);
+  if (!Number.isFinite(player.duration)) return;
+  const clip = activeClip();
+  if (!clip) {
+    player.currentTime = clamp(position, 0, player.duration);
+    return;
+  }
+  const end = sequenceActive ? sequenceDuration(current().clips) : Math.min(clip.end, player.duration);
+  const target = clamp(position, sequenceActive ? 0 : clip.start, end);
+  const located = sequenceActive ? sequenceSeek(current().clips, target) : { clip, time: target };
+  const resume = target < end && (!player.paused || changingCut);
+  currentClipId = located.clip.id;
+  discardPreload();
+  startAt(located.time, resume);
 }
 
-for (const event of ['play', 'pause', 'ended', 'timeupdate', 'durationchange', 'emptied']) {
-  player.addEventListener(event, updatePlayer);
-}
-$('toggle').onclick = () => player.paused ? playMain() : player.pause();
-$('back').onclick = () => seekMain(player.currentTime - 10);
-$('forward').onclick = () => seekMain(player.currentTime + 10);
+wirePlayback(inlinePlayer, true);
+$('toggle').onclick = () => {
+  if (changingCut || !player.paused) {
+    stopActive();
+    updatePlayer();
+  } else playMain();
+};
+$('back').onclick = () => seekMain(transportPosition() - 10);
+$('forward').onclick = () => seekMain(transportPosition() + 10);
 $('timeline').oninput = event => seekMain(Number(event.target.value));
 
-function setTab(tab) {
+function setTab(tab, target = output === inlinePlayer ? 'single' : 'pc') {
+  if (tab === 'layout' && activeTab !== 'layout') layoutTarget = target;
   if (tab !== 'library') stopAudition();
   activeTab = tab;
   for (const node of settings.querySelectorAll('[data-tab]')) {
@@ -232,14 +509,26 @@ function setTab(tab) {
     node.setAttribute('aria-pressed', String(selected));
     $(node.dataset.tab).hidden = !selected;
   }
-  if (tab === 'layout') renderRailSettings();
+  if (tab === 'layout') renderLayoutSettings();
+  if (tab === 'projection') renderProjection();
   if (tab === 'layout' || tab === 'objects') renderMock(tab);
 }
 
-$('settings').onclick = () => {
+function openSettings() {
   if (!settings.open) settings.showModal();
-  setTab(activeTab);
-};
+  const target = output === inlinePlayer ? 'single' : 'pc';
+  if (activeTab === 'layout') layoutTarget = target;
+  setTab(activeTab, target);
+}
+
+$('settings').onclick = openSettings;
+$('open-pc-layout').onclick = () => setTab('layout', 'pc');
+document.addEventListener('keydown', event => {
+  if (output === inlinePlayer || settings.open || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key.toLowerCase() !== 's' || event.target.closest('input, textarea, select, [contenteditable]')) return;
+  event.preventDefault();
+  openSettings();
+});
 $('close-settings').onclick = () => settings.close();
 $('add-videos').onclick = () => $('video-picker').click();
 settings.addEventListener('close', stopAudition);
@@ -282,24 +571,64 @@ function persistOrder() {
   return storePreference('order', videos.map(video => video.id));
 }
 
+function renderTileOrder() {
+  const list = $('tile-order-list');
+  list.replaceChildren();
+  $('tile-order-panel').hidden = !tileOrder.length && !videos.some(video => video.clips?.length);
+  if ($('tile-order-panel').hidden) return;
+  const entries = tiles();
+  entries.forEach((entry, index) => {
+    const row = element('div', 'list-row');
+    const title = element('span', 'tile-order-name', entry.title);
+    const up = button(entry.title + 'を前へ移動', () => moveTile(index, -1), 'secondary', '↑');
+    const down = button(entry.title + 'を後ろへ移動', () => moveTile(index, 1), 'secondary', '↓');
+    up.disabled = index === 0;
+    down.disabled = index === entries.length - 1;
+    row.append(title, up, down);
+    list.append(row);
+  });
+}
+
+function moveTile(index, offset) {
+  const order = tiles().map(entry => entry.id);
+  const next = index + offset;
+  if (!order[next]) return;
+  [order[index], order[next]] = [order[next], order[index]];
+  tileOrder = order;
+  storePreference('tileOrder', tileOrder);
+  renderRail();
+}
+
+$('reset-tile-order').onclick = () => {
+  tileOrder = [];
+  storePreference('tileOrder', tileOrder);
+  renderRail();
+};
+
+function forgetTiles(ids) {
+  const order = tileOrder.filter(id => !ids.includes(id));
+  if (order.length !== tileOrder.length) {
+    tileOrder = order;
+    storePreference('tileOrder', tileOrder);
+  }
+  const configured = [layout.gaps, layout.projection.gaps];
+  const stale = ids.filter(id => configured.some(gaps => Object.hasOwn(gaps, id)));
+  if (!stale.length) return;
+  for (const gaps of configured) for (const id of stale) delete gaps[id];
+  storePreference('layout', layout);
+}
+
 async function deleteVideo(video) {
   if (!confirm('「' + (video.caption || video.name) + '」の登録を解除しますか？')) return;
   try {
     await removeVideo(video.id);
     if (editorId === video.id) closeEditor();
-    if (currentId === video.id) {
-      player.pause();
-      currentId = undefined;
-      player.removeAttribute('src');
-      player.load();
-    }
+    if (currentId === video.id) clearPlayback();
     videos = videos.filter(item => item.id !== video.id);
-    if (Object.hasOwn(layout.gaps, video.id)) {
-      delete layout.gaps[video.id];
-      await storePreference('layout', layout);
-    }
+    forgetTiles([video.id, sequenceId(video), ...(video.clips || []).map(clip => clip.id)]);
     releaseUrl(video.file);
     releaseUrl(video.thumbnail);
+    for (const clip of video.clips || []) releaseUrl(clip.thumbnail);
     renderLibrary();
     renderRail();
     updatePlayer();
@@ -341,7 +670,7 @@ function snapshot(media) {
   });
 }
 
-async function inspectVideo(file) {
+async function inspectVideo(file, frameAt = 0) {
   const media = document.createElement('video');
   media.playsInline = true;
   media.muted = true;
@@ -352,6 +681,11 @@ async function inspectVideo(file) {
     media.src = localUrl;
     await metadata;
     if (!media.videoWidth || !Number.isFinite(media.duration)) throw new Error('この動画形式を再生できません');
+    if (frameAt > 0) {
+      const seek = mediaEvent(media, 'seeked', 2400);
+      media.currentTime = frameAt;
+      await seek;
+    }
     if (media.readyState < 2) {
       try { await mediaEvent(media, 'loadeddata', 1400); }
       catch {
@@ -405,7 +739,11 @@ function syncFrame() {
   $('frame-seek').value = position;
   $('frame-time').textContent = time(position, true);
   $('frame-duration').textContent = time(duration);
-  $('capture').disabled = preview.readyState < 2 || preview.seeking || pendingEditorPosition !== null || auditioning;
+  $('clip-map-position').style.left = (duration > 0 ? clamp(position / duration * 100, 0, 100) : 0) + '%';
+  updatePreviewBoundary();
+  const unavailable = preview.readyState < 2 || preview.seeking || pendingEditorPosition !== null || auditioning;
+  $('capture').disabled = unavailable;
+  $('clip-thumbnail').disabled = unavailable;
 }
 
 function editVideo(video) {
@@ -416,7 +754,9 @@ function editVideo(video) {
   $('caption').value = video.caption;
   $('volume').value = video.volume;
   $('volume-value').value = video.volume + '%';
+  $('frame-rate').value = video.previewFps ?? 30;
   $('video-editor').hidden = false;
+  renderClips();
   preview.src = urlFor(video.file);
   syncFrame();
   renderLibrary();
@@ -426,6 +766,7 @@ function editVideo(video) {
 function closeEditor() {
   const previous = edited();
   editorGeneration += 1;
+  closeClipEditor();
   stopAudition();
   preview.removeAttribute('src');
   preview.load();
@@ -457,10 +798,19 @@ preview.addEventListener('loadedmetadata', () => {
 });
 for (const event of ['loadeddata', 'seeking', 'seeked', 'timeupdate']) preview.addEventListener(event, syncFrame);
 preview.addEventListener('ended', stopAudition);
+preview.addEventListener('playing', syncFrame);
 
 $('frame-seek').oninput = event => seekPreview(Number(event.target.value));
-$('frame-prev').onclick = () => seekPreview((pendingEditorPosition ?? preview.currentTime) - 0.04);
-$('frame-next').onclick = () => seekPreview((pendingEditorPosition ?? preview.currentTime) + 0.04);
+function stepPreview(direction) {
+  const fps = Number($('frame-rate').value);
+  const position = pendingEditorPosition ?? preview.currentTime;
+  const frame = Math.floor(position * fps + 0.01);
+  seekPreview((frame + direction) / fps);
+}
+
+$('frame-prev').onclick = () => stepPreview(-1);
+$('frame-next').onclick = () => stepPreview(1);
+$('frame-rate').onchange = event => updateEdited({ previewFps: Number(event.target.value) });
 $('capture').onclick = async () => {
   const video = edited();
   if (!video) return;
@@ -480,6 +830,258 @@ $('capture').onclick = async () => {
   }
 };
 
+function clipRangeLabel(clip) {
+  return formatTimecode(clip.start) + '–' + formatTimecode(clip.end);
+}
+
+function readDraftRange() {
+  const duration = edited()?.duration ?? 0;
+  const start = parseTimecode($('clip-start').value);
+  const inputEnd = parseTimecode($('clip-end').value);
+  const end = Math.min(inputEnd, duration);
+  if (!Number.isFinite(start) || !Number.isFinite(inputEnd) || start >= end || inputEnd > duration + 0.00051) return null;
+  return { start, end };
+}
+
+function renderClipMap() {
+  const video = edited();
+  const ranges = $('clip-map-ranges');
+  ranges.replaceChildren();
+  if (!video || !(video.duration > 0)) return;
+
+  function place(node, range, index) {
+    node.style.left = range.start / video.duration * 100 + '%';
+    node.style.width = (range.end - range.start) / video.duration * 100 + '%';
+    node.style.setProperty('--clip-hue', (158 + index * 73) % 360);
+    ranges.append(node);
+  }
+
+  (video.clips || []).forEach((clip, index) => {
+    const label = (clip.caption ? clip.caption + ' · ' : '') + clipRangeLabel(clip);
+    place(button(label, () => seekPreview(clip.start), 'clip-map-range', ''), clip, index);
+  });
+  const draft = clipDraft && readDraftRange();
+  if (draft) place(element('span', 'clip-map-range clip-map-draft'), draft, 0);
+}
+
+$('clip-map').onclick = event => {
+  if (event.target.closest('button') || !edited()) return;
+  const bounds = $('clip-map').getBoundingClientRect();
+  seekPreview(clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * edited().duration);
+};
+
+function renderClips() {
+  const video = edited();
+  if (!video) return;
+  const clips = video.clips || [];
+  $('show-full-video').checked = video.showFull !== false;
+  $('clip-sequence-settings').hidden = !clips.length;
+  $('clip-mode').value = video.clipMode ?? 'separate';
+  $('sequence-caption-row').hidden = $('clip-mode').value === 'separate';
+  $('sequence-caption').value = video.sequenceCaption ?? '';
+  const list = $('clips-list');
+  list.replaceChildren();
+  clips.forEach((clip, index) => {
+    const range = clipRangeLabel(clip);
+    const title = clip.caption ? clip.caption + ' · ' + range : range;
+    const row = element('div', 'list-row');
+    const edit = button(title + 'を編集', () => openClipEditor(clip), 'list-main', '');
+    edit.append(element('span', '', title));
+    const up = button(title + 'を前へ移動', () => moveClip(video, index, -1), 'secondary', '↑');
+    const down = button(title + 'を後ろへ移動', () => moveClip(video, index, 1), 'secondary', '↓');
+    up.disabled = index === 0;
+    down.disabled = index === clips.length - 1;
+    row.append(edit, up, down, button('削除', () => deleteClip(video, clip)));
+    list.append(row);
+  });
+  renderClipMap();
+}
+
+async function moveClip(video, index, offset) {
+  if (clipSavePending) return;
+  const clips = [...video.clips];
+  const next = index + offset;
+  if (!clips[next]) return;
+  [clips[index], clips[next]] = [clips[next], clips[index]];
+  clipSavePending = true;
+  try {
+    await updateVideo(video.id, { clips });
+    video.clips = clips;
+    if (current() === video && sequenceActive) clearPlayback();
+    renderClips();
+    renderRail();
+    updatePlayer();
+  } catch {
+    saveError();
+  } finally {
+    clipSavePending = false;
+  }
+}
+
+$('clip-mode').onchange = event => {
+  const video = edited();
+  const clipMode = event.target.value;
+  if (!video) return;
+  updateEdited({ clipMode });
+  if (current() === video && currentClipId && ((sequenceActive && clipMode === 'separate') || (!sequenceActive && clipMode === 'combined'))) {
+    clearPlayback();
+  }
+  renderClips();
+  renderRail();
+  updatePlayer();
+};
+$('sequence-caption').onchange = event => {
+  updateEdited({ sequenceCaption: event.target.value.trim() });
+  renderRail();
+};
+
+function closeClipEditor() {
+  clipDraft = undefined;
+  $('clip-editor').hidden = true;
+  message($('clip-status'), '');
+  renderClipMap();
+}
+
+function openClipEditor(clip) {
+  const video = edited();
+  if (!video) return;
+  clipDraft = { ...clip };
+  $('clip-start').value = formatTimecode(clip?.start ?? 0);
+  $('clip-end').value = formatTimecode(clip?.end ?? Math.min(video.duration, 60));
+  $('clip-caption').value = clip?.caption ?? '';
+  $('clip-editor').hidden = false;
+  $('save-clip').disabled = clipSavePending;
+  message($('clip-status'), '');
+  renderClipMap();
+  if (clip) seekPreview(clip.start);
+  $('clip-editor').scrollIntoView({ block: 'nearest' });
+}
+
+$('add-clip').onclick = () => openClipEditor();
+$('cancel-clip').onclick = closeClipEditor;
+for (const field of ['clip-start', 'clip-end']) {
+  $(field).oninput = renderClipMap;
+  $(field + '-now').onclick = () => {
+    $(field).value = formatTimecode(pendingEditorPosition ?? preview.currentTime);
+    renderClipMap();
+  };
+}
+$('preview-clip').onclick = () => {
+  const range = readDraftRange();
+  if (range) playPreview(range);
+  else message($('clip-status'), '開始と終了を指定してから試聴してください。');
+};
+
+$('clip-thumbnail').onclick = async () => {
+  const draft = clipDraft;
+  if (!draft) return;
+  try {
+    const thumbnail = await snapshot(preview);
+    if (clipDraft !== draft) return;
+    draft.thumbnail = thumbnail;
+    draft.customThumbnail = true;
+    message($('clip-status'), 'この画像は区間を保存すると適用されます。');
+  } catch (error) {
+    if (clipDraft === draft) message($('clip-status'), error.message);
+  }
+};
+
+$('clip-thumbnail-auto').onclick = () => {
+  if (!clipDraft) return;
+  clipDraft.thumbnail = undefined;
+  clipDraft.customThumbnail = false;
+  message($('clip-status'), '区間を保存すると、開始時刻の画像を使用します。');
+};
+
+$('show-full-video').onchange = async event => {
+  const video = edited();
+  if (!video) return;
+  const showFull = event.target.checked;
+  event.target.disabled = true;
+  try {
+    await updateVideo(video.id, { showFull });
+    video.showFull = showFull;
+    if (!showFull && activeTileId() === video.id) clearPlayback();
+    renderRail();
+    updatePlayer();
+  } catch {
+    if (video === edited()) event.target.checked = video.showFull !== false;
+    saveError();
+  } finally {
+    event.target.disabled = false;
+  }
+};
+
+$('save-clip').onclick = async () => {
+  const video = edited();
+  const draft = clipDraft;
+  if (!video || !draft || clipSavePending) return;
+  const range = readDraftRange();
+  if (!range) {
+    message($('clip-status'), '開始と終了を動画の長さ（' + formatTimecode(video.duration) + '）の範囲内で入力してください。終了は開始より後に設定します。');
+    return;
+  }
+  const { start, end } = range;
+  const caption = $('clip-caption').value.trim();
+  clipSavePending = true;
+  $('save-clip').disabled = true;
+  message($('clip-status'), '区間を保存しています。');
+  try {
+    let thumbnail = draft.thumbnail;
+    if (!draft.customThumbnail && (!thumbnail || draft.start !== start)) {
+      const frame = await inspectVideo(video.file, start).catch(() => null);
+      thumbnail = frame?.thumbnail || undefined;
+    }
+    if (clipDraft !== draft || !videos.includes(video)) return;
+    const clip = { id: draft.id ?? crypto.randomUUID(), start, end, caption, thumbnail, customThumbnail: Boolean(draft.customThumbnail) };
+    const existing = video.clips || [];
+    const prior = existing.find(item => item.id === draft.id);
+    const clips = prior ? existing.map(item => item.id === clip.id ? clip : item) : [...existing, clip];
+    await updateVideo(video.id, { clips });
+    video.clips = clips;
+    if (prior?.thumbnail !== thumbnail) releaseUrl(prior?.thumbnail);
+    if (current() === video && sequenceActive) discardPreload();
+    if (currentClipId === clip.id && (player.currentTime < start || player.currentTime >= end)) {
+      startAt(start, false);
+    }
+    renderRail();
+    updatePlayer();
+    if (clipDraft === draft) {
+      closeClipEditor();
+      renderClips();
+      message($('edit-state'), '再生区間を保存しました。');
+    }
+  } catch {
+    if (clipDraft === draft) message($('clip-status'), '区間を保存できませんでした。');
+  } finally {
+    clipSavePending = false;
+    $('save-clip').disabled = false;
+  }
+};
+
+async function deleteClip(video, clip) {
+  if (clipSavePending || !confirm('この再生区間を削除しますか？')) return;
+  clipSavePending = true;
+  $('save-clip').disabled = true;
+  try {
+    const clips = video.clips.filter(item => item.id !== clip.id);
+    await updateVideo(video.id, { clips });
+    video.clips = clips;
+    if (current() === video && (currentClipId === clip.id || sequenceActive)) clearPlayback();
+    if (clipDraft?.id === clip.id) closeClipEditor();
+    releaseUrl(clip.thumbnail);
+    forgetTiles(clips.length ? [clip.id] : [clip.id, sequenceId(video)]);
+    renderRail();
+    renderClips();
+    updatePlayer();
+  } catch {
+    message($('edit-state'), '区間を削除できませんでした。');
+  } finally {
+    clipSavePending = false;
+    $('save-clip').disabled = false;
+  }
+}
+
 function updateEdited(changes) {
   const video = edited();
   if (!video) return;
@@ -496,55 +1098,177 @@ $('caption').onchange = event => {
 $('volume').oninput = event => {
   const volume = Number(event.target.value);
   $('volume-value').value = volume + '%';
-  applyVolume(preview, previewGain, volume);
-  if (editorId === currentId) applyVolume(player, mainGain, volume);
+  applyVolume(preview, volume);
+  if (editorId === currentId) applyVolume(player, volume);
   if (edited()) edited().volume = volume;
 };
 $('volume').onchange = event => updateEdited({ volume: Number(event.target.value) });
 
+function updatePreviewBoundary() {
+  clearTimeout(previewEndTimer);
+  if (!auditioning || previewStopAt === null || preview.paused || preview.seeking) return;
+  const remaining = previewStopAt - preview.currentTime;
+  if (remaining <= 0) {
+    const end = previewStopAt;
+    stopAudition();
+    if (preview.currentTime > end) preview.currentTime = end;
+  } else if (remaining <= 1) {
+    previewEndTimer = setTimeout(syncFrame, Math.max(20, remaining * 1000));
+  }
+}
+
 function stopAudition() {
+  previewIntent += 1;
+  previewStopAt = null;
+  clearTimeout(previewEndTimer);
   if (!auditioning) return;
   auditioning = false;
   preview.pause();
-  $('audition').textContent = '音量を試聴';
+  $('audition').textContent = 'プレビューを再生';
   syncFrame();
 }
 
-$('audition').onclick = () => {
-  if (auditioning) {
-    stopAudition();
-    return;
-  }
+async function playPreview(range) {
   const video = edited();
   if (!video) return;
-  player.pause();
-  enableAudio();
-  applyVolume(preview, previewGain, video.volume);
-  if (preview.ended) preview.currentTime = 0;
+  stopAudition();
+  stopActive();
+  const token = ++previewIntent;
   auditioning = true;
-  $('audition').textContent = '試聴を停止';
+  previewStopAt = range?.end ?? null;
+  $('audition').textContent = 'プレビューを一時停止';
   syncFrame();
-  preview.play().catch(error => {
+  try {
+    const position = range?.start ?? (preview.ended ? 0 : preview.currentTime);
+    if (preview.readyState < 1 || preview.seeking || Math.abs(preview.currentTime - position) >= 0.002) {
+      if (!await positionMedia(preview, position, () => token === previewIntent)) return;
+    }
+    applyVolume(preview, video.volume);
+    await preview.play();
+    if (token === previewIntent) syncFrame();
+  } catch (error) {
+    if (token !== previewIntent) return;
     stopAudition();
-    if (error.name !== 'AbortError') message($('edit-state'), '試聴を開始できませんでした。');
-  });
+    if (error.name !== 'AbortError') {
+      const target = range ? $('clip-status') : $('edit-state');
+      message(target, 'もう一度再生ボタンを押してください。');
+    }
+  }
+}
+
+$('audition').onclick = () => auditioning ? stopAudition() : playPreview();
+
+function renderProjection() {
+  const active = output !== inlinePlayer;
+  const config = screenLayout(active);
+  applyLayout($('screen'), active);
+  renderRailSpacing(railTrack, config);
+  $('transport').hidden = $('main-seek').hidden = !config.controlsVisible;
+  $('settings').hidden = !config.gearVisible;
+  $('playback-bar').hidden = !config.controlsVisible && !config.gearVisible;
+  $('projection-toggle').textContent = projectionWindow ? '上映画面を閉じる' : '上映画面を開く';
+}
+
+function switchPlaybackTarget(video, position) {
+  if (output === video) return;
+  stopAudition();
+  stopActive();
+  wirePlayback(player, false);
+  discardPreload();
+  if (standby && standby !== output) standby.remove();
+  if (player !== output) player.remove();
+  standby = undefined;
+  delete output.dataset.inactiveStream;
+  output.removeAttribute('src');
+  output.load();
+  output = player = video;
+  wirePlayback(player, true);
+  const selected = current();
+  if (selected) {
+    player.src = urlFor(selected.file);
+    player.load();
+    startAt(position, false);
+    applyVolume(player, selected.volume);
+  }
+  rail.scrollLeft = 0;
+  rail.scrollTop = 0;
+  renderProjection();
+  updatePlayer();
+}
+
+function stopProjection(status = '') {
+  const popup = projectionWindow;
+  projectionWindow = undefined;
+  clearInterval(projectionTimer);
+  if (output !== inlinePlayer) switchPlaybackTarget(inlinePlayer, playbackPosition);
+  if (popup && !popup.closed) popup.close();
+  renderProjection();
+  message($('projection-status'), status);
+}
+
+$('projection-toggle').onclick = () => {
+  if (projectionWindow) {
+    stopProjection();
+    return;
+  }
+  const popup = window.open('./projection.html', '_blank', 'popup,width=960,height=540');
+  if (!popup) {
+    message($('projection-status'), 'ブラウザのポップアップを許可してから、もう一度開いてください。');
+    return;
+  }
+  projectionWindow = popup;
+  projectionDeadline = performance.now() + 12000;
+  projectionTimer = setInterval(() => {
+    if (popup.closed) stopProjection();
+    else if (output === inlinePlayer && performance.now() > projectionDeadline) {
+      stopProjection('上映画面を読み込めませんでした。オンラインでアプリを開き直してください。');
+    }
+  }, 400);
+  renderProjection();
+  message($('projection-status'), '上映画面を開いています。');
 };
 
-function applyLayout(node) {
+window.addEventListener('message', event => {
+  if (event.origin !== location.origin || !projectionWindow || event.source !== projectionWindow) return;
+  if (event.data === 'exhibit-projection-ready') {
+    const output = projectionWindow.document.getElementById('projection-video');
+    if (!output) return;
+    switchPlaybackTarget(output, player.currentTime || 0);
+    settings.close();
+    message($('projection-status'), '上映画面に接続しています。');
+  } else if (event.data === 'exhibit-projection-closing') {
+    stopProjection();
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  projectionWindow?.close();
+});
+
+function applyLayout(node, projected) {
+  const config = screenLayout(projected);
+  const grid = projected && config.arrangement === 'grid';
+  const { columns, rows } = gridDimensions(railTrack.children.length, config.columns);
+  node.classList.toggle('projection-active', projected);
+  node.classList.toggle('projection-grid', grid);
+  node.classList.toggle('controls-hidden', !config.controlsVisible);
+  node.dataset.controlsPosition = config.controlsPosition;
   const properties = {
     '--top': layout.top + '%',
     '--video-width': layout.width + '%',
     '--video-size': layout.height / 100,
     '--video-x': clamp(layout.x, layout.width / 2, 100 - layout.width / 2) + '%',
-    '--rail': layout.rail + '%',
-    '--thumb': layout.thumb + 'px',
+    '--rail': config.rail + '%',
+    '--thumb': config.thumb + 'px',
+    '--grid-columns': columns,
+    '--grid-rows': rows,
+    '--grid-gap': (config.gridGap ?? pcDefaults.gridGap) + 'px',
   };
   for (const [property, value] of Object.entries(properties)) node.style.setProperty(property, value);
 }
 
 function renderLayout() {
-  applyLayout($('screen'));
-  renderRailSpacing(railTrack);
+  renderProjection();
   if (activeTab === 'layout') renderMock('layout');
   if (activeTab === 'objects') renderMock('objects');
 }
@@ -566,27 +1290,44 @@ function rangeField(label, min, max, unit, value, onInput, onChange) {
   return field;
 }
 
-function renderLayoutFields() {
-  const fields = layoutSpecs.map(([key, label, min, max, unit]) => rangeField(label, min, max, unit, layout[key], value => {
-    layout[key] = value;
+function renderLayoutSettings() {
+  const pc = layoutTarget === 'pc';
+  const config = editingLayout();
+  const grid = pc && config.arrangement === 'grid';
+  $('layout-target').value = layoutTarget;
+  $('pc-thumbnail-settings').hidden = !pc;
+  $('projection-layout').value = layout.projection.arrangement;
+  $('projection-columns').value = layout.projection.columns;
+  $('projection-columns-row').hidden = !grid;
+  $('rail-settings').hidden = grid;
+  $('controls-visible').checked = config.controlsVisible;
+  $('controls-position').value = config.controlsPosition;
+  $('pc-gear-row').hidden = !pc;
+  $('pc-gear-visible').checked = layout.projection.gearVisible;
+
+  const specs = pc ? (grid ? pcGridSpecs : pcRailSpecs) : layoutSpecs;
+  const fields = specs.map(([key, label, min, max, unit]) => rangeField(label, min, max, unit, config[key], value => {
+    config[key] = value;
     renderLayout();
   }, () => storePreference('layout', layout)));
   $('layout-fields').replaceChildren(...fields);
+  renderRailSettings();
 }
 
 function renderRailSettings() {
-  const custom = layout.railMode === 'custom';
-  $('rail-mode').value = layout.railMode;
+  const config = editingLayout();
+  const custom = config.railMode === 'custom';
+  $('rail-mode').value = config.railMode;
   $('rail-custom').hidden = !custom;
   if (!custom) return;
 
   const gaps = $('rail-gaps');
   gaps.replaceChildren();
-  $('rail-gap-help').textContent = videos.length < 2
+  const entries = tiles();
+  $('rail-gap-help').textContent = entries.length < 2
     ? '動画を2本以上登録すると、間隔を調整できます。'
     : '各サムネイルと、その一つ前のサムネイルとの間隔を指定します。';
-  videos.slice(1).forEach((video, index) => {
-    const title = video.caption || video.name;
+  entries.slice(1).forEach(({ id, title }, index) => {
     const field = element('label', 'rail-gap');
     const name = element('span', '', (index + 2) + '番目の前 · ' + title);
     name.title = name.textContent;
@@ -594,16 +1335,16 @@ function renderRailSettings() {
     const input = element('input');
     Object.assign(input, {
       type: 'number', inputMode: 'numeric', min: 0, max: maxGap, step: 1,
-      value: layout.gaps[video.id] ?? defaultGap,
+      value: config.gaps[id] ?? defaultGap,
     });
     input.setAttribute('aria-label', name.textContent + ' の間隔（px）');
     input.oninput = () => {
       if (!Number.isFinite(input.valueAsNumber)) return;
-      layout.gaps[video.id] = clamp(Math.round(input.valueAsNumber), 0, maxGap);
+      config.gaps[id] = clamp(Math.round(input.valueAsNumber), 0, maxGap);
       renderLayout();
     };
     input.onchange = () => {
-      input.value = layout.gaps[video.id] ?? defaultGap;
+      input.value = config.gaps[id] ?? defaultGap;
       storePreference('layout', layout);
     };
     value.append(input, element('span', '', 'px'));
@@ -612,19 +1353,56 @@ function renderRailSettings() {
   });
 }
 
-$('rail-mode').onchange = event => {
-  layout.railMode = event.target.value;
-  renderRailSettings();
+function saveLayoutChange() {
   renderLayout();
   storePreference('layout', layout);
+}
+
+$('layout-target').onchange = event => {
+  layoutTarget = event.target.value;
+  renderLayoutSettings();
+  renderMock('layout');
+};
+
+$('projection-layout').onchange = event => {
+  layout.projection.arrangement = event.target.value;
+  rail.scrollTop = rail.scrollLeft = 0;
+  renderLayoutSettings();
+  saveLayoutChange();
+};
+
+$('projection-columns').onchange = event => {
+  layout.projection.columns = Number(event.target.value);
+  rail.scrollTop = 0;
+  saveLayoutChange();
+};
+
+$('controls-visible').onchange = event => {
+  editingLayout().controlsVisible = event.target.checked;
+  saveLayoutChange();
+};
+
+$('controls-position').onchange = event => {
+  editingLayout().controlsPosition = event.target.value;
+  saveLayoutChange();
+};
+
+$('pc-gear-visible').onchange = event => {
+  layout.projection.gearVisible = event.target.checked;
+  saveLayoutChange();
+};
+
+$('rail-mode').onchange = event => {
+  editingLayout().railMode = event.target.value;
+  renderRailSettings();
+  saveLayoutChange();
 };
 
 $('reset-layout').onclick = () => {
-  layout = { ...defaults, gaps: {} };
-  renderLayoutFields();
-  renderRailSettings();
-  renderLayout();
-  storePreference('layout', layout);
+  if (layoutTarget === 'pc') layout.projection = { ...pcDefaults, gaps: {} };
+  else layout = { ...defaults, gaps: {}, projection: layout.projection };
+  renderLayoutSettings();
+  saveLayoutChange();
 };
 
 function placeObject(node, object) {
@@ -651,37 +1429,49 @@ function renderDecorations() {
 }
 
 function renderMock(tab) {
-  const mock = $(tab === 'layout' ? 'layout-preview' : 'object-preview');
+  const isLayout = tab === 'layout';
+  const projected = isLayout ? layoutTarget === 'pc' : output !== inlinePlayer;
+  const config = screenLayout(projected);
+  const mock = $(isLayout ? 'layout-preview' : 'object-preview');
   const frame = element('div', 'frame', '動画枠');
-  const scroll = mock.querySelector('.mock-rail')?.scrollLeft || 0;
+  const previous = mock.querySelector('.mock-rail');
+  const scroll = { left: previous?.scrollLeft || 0, top: previous?.scrollTop || 0 };
   const strip = element('div', 'mock-rail');
   const track = element('div', 'rail-track');
   strip.append(track);
-  for (const video of videos) {
-    const tile = element(video.thumbnail ? 'img' : 'span', 'mock-tile');
-    tile.dataset.id = video.id;
-    if (video.thumbnail) {
-      tile.src = urlFor(video.thumbnail);
-      tile.alt = '';
+  for (const entry of tiles()) {
+    const tile = element('div', 'tile mock-tile');
+    tile.dataset.id = entry.id;
+    const thumb = entry.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
+    if (entry.thumbnail) {
+      thumb.src = urlFor(entry.thumbnail);
+      thumb.alt = '';
     }
+    tile.append(thumb, element('span', 'caption', entry.title));
     track.append(tile);
   }
-  renderRailSpacing(track);
+  renderRailSpacing(track, config);
+  const controls = element('div', 'controls mock-controls');
+  if (config.controlsVisible) {
+    controls.append(element('span', '', '↶　▶　↷'), element('span', 'mock-seek'));
+  }
+  if (config.gearVisible) controls.append(element('span', 'gear', '⚙'));
   const overlay = element('div', 'decorations');
   for (const object of decorations.filter(object => object.visible)) {
     const node = objectNode(object);
-    if (tab === 'objects') attachDrag(node, object, mock);
+    if (!isLayout) attachDrag(node, object, mock);
     overlay.append(node);
   }
   const { clientWidth, clientHeight } = $('screen');
   mock.style.setProperty('--mock-ratio', clientWidth + ' / ' + clientHeight);
-  applyLayout(mock);
-  mock.replaceChildren(frame, strip, overlay);
-  const scale = mock.clientWidth / clientWidth;
+  applyLayout(mock, projected);
+  mock.replaceChildren(frame, strip, controls, overlay);
+  const scale = mock.clientWidth / Math.max(1, clientWidth);
   const inset = parseFloat(getComputedStyle(rail).paddingLeft) || 0;
   mock.style.setProperty('--mock-inset', inset * scale + 'px');
+  mock.style.setProperty('--grid-gap', (config.gridGap ?? pcDefaults.gridGap) * scale + 'px');
   track.style.setProperty('--rail-scale', scale);
-  strip.scrollLeft = scroll;
+  strip.scrollTo(scroll.left, scroll.top);
 }
 
 function attachDrag(node, object, mock) {
@@ -861,15 +1651,16 @@ async function start() {
   $('add-videos').disabled = true;
   $('add-object').disabled = true;
   try {
-    const [entries, savedLayout, savedObjects, order] = await Promise.all([
-      readVideos(), readPreference('layout'), readPreference('decorations'), readPreference('order'),
+    const [entries, savedLayout, savedObjects, order, savedTileOrder] = await Promise.all([
+      readVideos(), readPreference('layout'), readPreference('decorations'), readPreference('order'), readPreference('tileOrder'),
     ]);
     const positions = new Map((order || []).map((id, index) => [id, index]));
     videos = entries.sort((a, b) => {
       const orderDifference = (positions.get(a.id) ?? entries.length) - (positions.get(b.id) ?? entries.length);
       return orderDifference || (a.addedAt ?? 0) - (b.addedAt ?? 0);
     });
-    layout = { ...defaults, ...savedLayout, gaps: savedLayout?.gaps ?? {} };
+    layout = loadLayout(savedLayout);
+    tileOrder = savedTileOrder || [];
     decorations = savedObjects || [];
     ready = true;
     $('add-videos').disabled = false;
@@ -880,7 +1671,7 @@ async function start() {
   }
   renderRail();
   renderLibrary();
-  renderLayoutFields();
+  renderLayoutSettings();
   renderLayout();
   renderObjects();
   updatePlayer();

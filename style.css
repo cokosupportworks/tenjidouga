@@ -16,9 +16,21 @@ button { cursor: pointer; color: inherit }
 button:disabled { cursor: default; opacity: .42 }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
 button, input, select { -webkit-tap-highlight-color: transparent }
-.screen, .mock { --inset: max(14px, env(safe-area-inset-left), env(safe-area-inset-right)); --controls: clamp(46px, 8dvh, 58px); --rail: 22%; --top: 4%; --video-width: 90%; --video-size: 1; --video-x: 50%; --thumb: 150px }
+.screen, .mock { --inset: max(14px, env(safe-area-inset-left), env(safe-area-inset-right)); --controls: clamp(46px, 8dvh, 58px); --rail: 22%; --top: 4%; --video-width: 90%; --video-size: 1; --video-x: 50%; --thumb: 150px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --reserved-controls: var(--controls);
+  --controls-bottom: var(--rail);
+  --frame-start: max(var(--top), var(--safe-top));
+  --frame-end-space: var(--reserved-controls);
+}
+.controls-hidden { --reserved-controls: 0px }
+[data-controls-position=top] {
+  --frame-start: calc(max(var(--top), var(--safe-top)) + var(--reserved-controls));
+  --frame-end-space: 0px;
+}
 .screen { container-type: inline-size; width: 100%; height: 100%; height: 100dvh; position: relative; isolation: isolate; overflow: hidden }
-.frame { position: absolute; left: var(--video-x); top: max(var(--top), env(safe-area-inset-top)); transform: translateX(-50%); width: var(--video-width); height: calc((100% - var(--top) - var(--controls) - var(--rail)) * var(--video-size)); overflow: hidden; border-radius: 13px; background: #08090b; box-shadow: 0 0 0 1px #ffffff13 }
+.frame { position: absolute; left: var(--video-x); top: var(--frame-start); transform: translateX(-50%); width: var(--video-width); height: calc((100% - var(--frame-start) - var(--frame-end-space) - var(--rail)) * var(--video-size)); overflow: hidden; border-radius: 13px; background: #08090b; box-shadow: 0 0 0 1px #ffffff13 }
 .frame video { width: 100%; height: 100%; display: block; object-fit: contain }
 .empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; background: radial-gradient(ellipse at center, #191d24, #0c0e12 72%); text-align: center; padding: 10px }
 .empty-icon { border: 1px solid #ffffff24; background: #ffffff08; border-radius: 14px; display: grid; place-items: center; font-size: 30px; width: 52px; height: 48px; color: var(--accent); margin-bottom: 3px }
@@ -29,7 +41,10 @@ button, input, select { -webkit-tap-highlight-color: transparent }
 .primary:hover:not(:disabled) { background: #d7fce9 }
 .secondary, .icon-button, .selection select { background: #22252d; color: #f3f4f6; border: 1px solid var(--outline) }
 .secondary:hover:not(:disabled), .icon-button:hover { background: #2c303a }
-.controls { position: absolute; bottom: var(--rail); left: max(var(--inset), 5%); right: max(var(--inset), 5%); height: var(--controls); display: flex; align-items: center; gap: clamp(10px, 2vw, 24px); z-index: 3 }
+.controls { position: absolute; bottom: var(--controls-bottom); left: max(var(--inset), 5%); right: max(var(--inset), 5%); height: var(--controls); display: flex; align-items: center; gap: clamp(10px, 2vw, 24px); z-index: 5 }
+[data-controls-position=top] > .controls { top: var(--safe-top); bottom: auto }
+.controls-hidden > .controls { justify-content: flex-end; pointer-events: none }
+.controls-hidden > .controls .gear { pointer-events: auto; background: #101114e8 }
 .controls button { flex: 0 0 auto; min-width: 44px; min-height: 44px; border: 0; background: transparent; border-radius: 8px; position: relative }
 .controls button:hover:not(:disabled) { background: #ffffff15 }
 .transport { display: flex; align-items: center; gap: 4px }
@@ -56,7 +71,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer }
 .decoration.rect, .decoration.circle { width: var(--object-size); aspect-ratio: 1; background: currentColor }
 .decoration.circle { border-radius: 50% }
 .decoration.text { max-width: 85%; font-size: var(--object-size); line-height: 1.15; font-weight: 700 }
-.notice { position: absolute; z-index: 5; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: max-content; max-width: 85%; padding: 10px 14px; border-radius: 8px; background: #242936; box-shadow: 0 5px 20px #0008; font-size: .875rem }
+.notice { position: absolute; z-index: 6; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: max-content; max-width: 85%; padding: 10px 14px; border-radius: 8px; background: #242936; box-shadow: 0 5px 20px #0008; font-size: .875rem }
 dialog { width: min(850px, 94vw); max-height: min(90dvh, 850px); padding: 0; background: #191b20; color: inherit; border: 1px solid #3a3d48; border-radius: 17px; box-shadow: 0 20px 75px #000b; overflow: hidden }
 dialog[open] { display: flex; flex-direction: column }
 dialog::backdrop { background: #08090bbb }
@@ -80,7 +95,10 @@ h2 { font-size: 1rem }
 .list-row .secondary { min-width: 42px; padding: 6px }
 .editor { display: grid; gap: 13px; padding: 12px; border: 1px solid var(--outline); border-radius: 10px }
 .editor h2 { overflow-wrap: anywhere }
-.edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px }
+.edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px }
+.edit-details { min-width: 0; display: grid; gap: 13px; align-content: start }
+.edit-preview { min-width: 0; align-self: start }
+@media (min-width: 521px) and (min-height: 451px) { .edit-preview { position: sticky; top: 0 } }
 #preview-video { display: block; background: #08090a; width: 100%; height: clamp(85px, 27vh, 235px); object-fit: contain; border-radius: 7px }
 .frame-tools { display: flex; flex-wrap: wrap; gap: 5px }
 .frame-tools button { padding-inline: 7px }
@@ -90,10 +108,15 @@ h2 { font-size: 1rem }
 .range-field span, .layout-fields label > span { display: flex; justify-content: space-between; gap: 5px }
 output { color: var(--accent); font-variant-numeric: tabular-nums }
 .layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; font-size: .875rem }
-.mock { position: relative; height: clamp(125px, 31dvh, 245px); aspect-ratio: var(--mock-ratio, 16 / 9); width: auto; max-width: 100%; justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden; container-type: inline-size; --controls: 12% }
-.mock .frame { top: var(--top); display: grid; place-items: center; border-radius: 4px; border: 1px solid #606674; color: #c0c4ce; font-size: .8125rem }
+.mock { position: relative; height: clamp(125px, 31dvh, 245px); aspect-ratio: var(--mock-ratio, 16 / 9); width: auto; max-width: 100%; justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden; container-type: inline-size; --controls: 12%; --safe-top: 0px; --safe-bottom: 0px }
+.mock .frame { display: grid; place-items: center; border-radius: 4px; border: 1px solid #606674; color: #c0c4ce; font-size: .8125rem }
 .mock-rail { position: absolute; inset: auto 0 0; height: var(--rail); overflow: auto hidden; padding: 3px var(--mock-inset, 4px); background: #242730; scrollbar-width: none }
-.mock-tile { flex: none; display: block; width: calc(var(--thumb) * var(--rail-scale)); height: 100%; object-fit: cover; background: #505765; border-radius: 2px }
+.mock .mock-tile { width: calc(var(--thumb) * var(--rail-scale)); height: 100%; padding: 0; gap: 2px; border: 0; border-radius: 3px }
+.mock-tile .thumb { border-radius: 2px }
+.mock-tile .caption { font-size: clamp(5px, 2.3cqw, 10px) }
+.mock-controls { gap: 4px; font-size: clamp(7px, 3cqw, 12px); white-space: nowrap }
+.mock-controls .gear { font-size: inherit }
+.mock-seek { height: 2px; flex: 1; min-width: 0; background: #8b8f9a; border-radius: 2px }
 .rail-settings { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--outline); border-radius: 10px }
 .rail-gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 8px; margin-top: 9px }
 .rail-gap { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 5px 8px; border-radius: 7px; background: #22252d; color: #e6e8ed; font-size: .875rem }
@@ -117,3 +140,64 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
   .empty-icon { width: 36px; height: 32px; font-size: 22px; margin: 0 }
   .empty { gap: 5px }
 }
+
+.projection-layout { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between }
+.layout-checkbox { display: flex; gap: 8px; align-items: center; min-height: 34px }
+.layout-checkbox input { width: 18px; height: 18px; accent-color: var(--accent); flex: none }
+.projection-active {
+  --controls-bottom: var(--safe-bottom);
+  --thumbnail-top: var(--safe-top);
+  --thumbnail-bottom: calc(var(--safe-bottom) + var(--reserved-controls));
+}
+.projection-active[data-controls-position=top] {
+  --thumbnail-top: calc(var(--safe-top) + var(--reserved-controls));
+  --thumbnail-bottom: var(--safe-bottom);
+}
+.projection-active .frame { display: none }
+.projection-active[data-controls-position=top] .notice { top: calc(var(--thumbnail-top) + 6px) }
+.projection-active :is(.rail, .mock-rail) { top: var(--thumbnail-top); bottom: var(--thumbnail-bottom); height: auto }
+.projection-active:not(.projection-grid) .rail-track { height: var(--rail) }
+.projection-active:not(.projection-grid) .tile .thumb { object-fit: contain }
+.projection-grid :is(.rail, .mock-rail) { overflow: hidden auto }
+.projection-grid .rail-track {
+  display: grid;
+  grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--grid-rows), minmax(clamp(90px, 20dvh, 160px), 1fr));
+  width: 100%;
+  height: 100%;
+  gap: var(--grid-gap);
+}
+.projection-grid .rail-track .tile { width: 100%; height: 100%; margin: 0; min-height: 0 }
+.projection-grid .rail-track .thumb { object-fit: contain }
+.mock.projection-grid .rail-track {
+  grid-template-rows: repeat(var(--grid-rows), minmax(18px, 1fr));
+}
+
+.projection-output { position: relative; width: 100%; height: 100%; background: #000 }
+.projection-output video { display: block; width: 100%; height: 100%; object-fit: contain }
+.projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }
+.projection-output:fullscreen .fullscreen-button { display: none }
+
+@media (max-width: 520px) {
+  .tabs { overflow-x: auto; gap: 4px; padding-inline: 10px }
+  .tabs button { flex: 0 0 auto; padding-inline: 7px; white-space: nowrap }
+}
+
+.clip-settings { display: grid; gap: 9px; border-top: 1px solid var(--outline); padding-top: 12px }
+.clip-settings .layout-checkbox { color: var(--muted); font-size: .875rem }
+#clip-editor input { font-variant-numeric: tabular-nums }
+.clip-time-field { display: grid; gap: 7px; align-content: start }
+.tile-order-name { flex: 1; min-width: 0; padding-inline: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+.preview-tools { margin-block: 8px }
+.clip-map { position: relative; min-height: 26px; border-radius: 5px; background: #101114; overflow: hidden }
+.clip-map-ranges { position: absolute; inset: 3px 0 }
+.clip-map-range { position: absolute; inset-block: 0; min-width: 2px; padding: 0; border: 0; border-radius: 2px; background: hsl(var(--clip-hue) 60% 52% / .72) }
+.clip-map-range:hover, .clip-map-range:focus-visible { z-index: 2; filter: brightness(1.3) }
+.clip-map-draft { z-index: 1; border: 2px solid var(--accent); background: transparent; pointer-events: none }
+#clip-map-position { position: absolute; z-index: 3; inset-block: 0; width: 2px; background: #fff; pointer-events: none }
+.clip-map-key { margin-top: 5px }
+#sequence-caption-row { display: grid; gap: 5px; font-size: .875rem }
+#sequence-caption { width: 100%; min-height: 42px; background: #111318; color: inherit; border: 1px solid var(--outline); border-radius: 7px; padding: 8px }
+.standby-video { position: absolute; inset: 0 }
+video[data-inactive-stream] { opacity: 0; pointer-events: none }
