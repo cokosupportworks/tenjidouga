@@ -1258,7 +1258,7 @@ function renderProjection() {
   const desktopGuide = $('projection-guide-desktop');
   desktopGuide.hidden = isIPad || isIPhone;
   desktopGuide.textContent = isWindows
-    ? '端末の画面で大きく見るには、上映ウィンドウの「拡大表示」を使います。テレビに映す場合は、Windowsで画面を「拡張」にします。自動配置にはブラウザの画面管理の許可が必要です。手動の場合は、上映ウィンドウを外部画面に移し、「外部画面で全画面」を押します。'
+    ? '端末の画面で大きく見るには、上映ウィンドウの「拡大表示」を使います。テレビに映す場合は、Windowsで画面を「拡張」にし、Edgeの「ウィンドウ管理」を許可します。上映ウィンドウの「外部画面で全画面」を押すと、テレビ側への移動を確認して全画面にします。'
     : 'システムのディスプレイ設定で画面を拡張し、上映ウィンドウを外部画面へ移して「全画面」を押します。';
   const displayButton = $('projection-display');
   displayButton.hidden = !isIPad && !canPlaceProjection();
@@ -1363,6 +1363,10 @@ window.addEventListener('message', event => {
     pendingExternalProjection = undefined;
     renderProjection();
     message($('projection-status'), '別のディスプレイで全画面表示しています。');
+  } else if (event.data?.type === 'exhibit-projection-external-confirmed') {
+    externalProjection = event.data.info;
+    renderProjection();
+    message($('projection-status'), '別のディスプレイで全画面表示しています。');
   } else if (event.data === 'exhibit-projection-closing') {
     stopProjection();
   }
@@ -1409,6 +1413,19 @@ $('projection-display').onclick = async () => {
     const connection = openProjection(true);
     const popup = projectionWindow;
     if (!popup) return;
+    if (isWindows) {
+      if (!await connection || popup !== projectionWindow) return;
+      if (typeof popup.exhibitProjectOnExternalScreen !== 'function') {
+        message($('projection-status'), '上映画面を閉じ、アプリを更新して開き直してください。');
+        return;
+      }
+      const failure = await popup.exhibitProjectOnExternalScreen();
+      if (failure && popup === projectionWindow) {
+        popup.focus();
+        message($('projection-status'), failure);
+      }
+      return;
+    }
     const details = await window.getScreenDetails();
     const home = details.currentScreen;
     const external = details.screens.filter(screen => screen !== home &&

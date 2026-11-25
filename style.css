@@ -178,6 +178,8 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 .projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }
 .projection-output .enlarge-window-button { position: absolute; left: 16px; bottom: 16px; background: #202229; color: #fff }
 .projection-output:fullscreen .enlarge-window-button { display: none }
+.projection-window-status { position: absolute; right: 16px; bottom: 68px; max-width: min(32rem, calc(100% - 32px)); margin: 0; padding: 8px 12px; border-radius: 8px; background: #202229; color: #fff }
+.projection-output:fullscreen .projection-window-status { display: none }
 .projection-output:fullscreen:not(.show-fullscreen-controls) .fullscreen-button:not(:focus-visible) {
   opacity: 0;
   pointer-events: none;
