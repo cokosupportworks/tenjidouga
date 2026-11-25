@@ -1,5 +1,6 @@
-import { readVideos, addVideo, removeVideo, updateVideo, readPreference, writePreference } from './storage.js';
-import { parseTimecode, formatTimecode, playbackTiles, sequenceId, sequenceDuration, sequencePosition, sequenceSeek } from './clips.js';
+'use strict';
+const { readVideos, addVideo, removeVideo, updateVideo, readPreference, writePreference } = window.exhibitStorage;
+const { parseTimecode, formatTimecode, playbackTiles, sequenceId, sequenceDuration, sequencePosition, sequenceSeek } = window.exhibitClips;
 
 const $ = id => document.getElementById(id);
 const inlinePlayer = $('player');
@@ -15,6 +16,12 @@ const preview = $('preview-video');
 const settings = $('settings-dialog');
 const rail = $('rail');
 const railTrack = $('rail-track');
+const isIPad = /iPad/i.test(navigator.userAgent) ||
+  (/Mac/i.test(navigator.platform) && navigator.maxTouchPoints > 1);
+const isIPhone = /iPhone|iPod/i.test(navigator.userAgent);
+const isWindows = /Windows/i.test(navigator.userAgent);
+const canPlaceProjection = () => !isIPhone && location.protocol !== 'file:' &&
+  typeof window.getScreenDetails === 'function';
 const defaults = {
   top: 4, width: 90, height: 100, x: 50, rail: 22, thumb: 150, railMode: 'even',
   controlsVisible: true, controlsPosition: 'bottom', gearVisible: true,
@@ -64,10 +71,19 @@ let auditioning = false;
 let previewStopAt = null;
 let previewIntent = 0;
 let previewEndTimer;
+let previewFrameRate = 30;
+let settingsPosition;
+let dialogDrag;
 let ready = false;
 let projectionWindow;
 let projectionTimer;
 let projectionDeadline;
+let projectionConnection;
+let resolveProjectionConnection;
+let projectionKeepSettings = false;
+let externalProjection;
+let pendingExternalProjection;
+let projectionDisplayBusy = false;
 let playbackPosition = 0;
 
 const current = () => videos.find(video => video.id === currentId);
@@ -214,7 +230,9 @@ function renderRail() {
       thumb.src = urlFor(entry.thumbnail);
       thumb.alt = '';
     }
-    tile.append(thumb, element('span', 'caption', entry.title));
+    const caption = element('span', 'caption', entry.title);
+    if (entry.align) caption.style.textAlign = entry.align;
+    tile.append(thumb, caption);
     railTrack.append(tile);
   }
   renderTileOrder();
@@ -514,22 +532,51 @@ function setTab(tab, target = output === inlinePlayer ? 'single' : 'pc') {
   if (tab === 'layout' || tab === 'objects') renderMock(tab);
 }
 
-function openSettings() {
-  if (!settings.open) settings.showModal();
+function constrainSettings(left, top) {
+  const width = settings.offsetWidth;
+  const handleHeight = $('settings-handle').offsetHeight;
+  const visibleWidth = Math.min(width, 88);
+  const visibleHeight = Math.min(handleHeight, 32);
+  return {
+    left: clamp(left, visibleWidth - width, window.innerWidth - visibleWidth),
+    top: clamp(top, visibleHeight - handleHeight, window.innerHeight - visibleHeight),
+  };
+}
+
+function setSettingsPosition(left, top) {
+  settingsPosition = constrainSettings(left, top);
+  settings.dataset.positioned = '';
+  settings.style.left = settingsPosition.left + 'px';
+  settings.style.top = settingsPosition.top + 'px';
+}
+
+const settingsHandle = $('settings-handle');
+settingsHandle.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || event.target.closest('button')) return;
+  const { left, top } = settings.getBoundingClientRect();
+  dialogDrag = { id: event.pointerId, x: event.clientX - left, y: event.clientY - top };
+  settingsHandle.setPointerCapture(event.pointerId);
+});
+settingsHandle.addEventListener('pointermove', event => {
+  if (dialogDrag?.id !== event.pointerId) return;
+  setSettingsPosition(event.clientX - dialogDrag.x, event.clientY - dialogDrag.y);
+});
+settingsHandle.addEventListener('lostpointercapture', () => { dialogDrag = undefined; });
+
+settings.addEventListener('exhibit-settings-open', () => {
+  if (settingsPosition) setSettingsPosition(settingsPosition.left, settingsPosition.top);
   const target = output === inlinePlayer ? 'single' : 'pc';
   if (activeTab === 'layout') layoutTarget = target;
   setTab(activeTab, target);
-}
+});
 
-$('settings').onclick = openSettings;
 $('open-pc-layout').onclick = () => setTab('layout', 'pc');
 document.addEventListener('keydown', event => {
   if (output === inlinePlayer || settings.open || event.altKey || event.ctrlKey || event.metaKey) return;
   if (event.key.toLowerCase() !== 's' || event.target.closest('input, textarea, select, [contenteditable]')) return;
   event.preventDefault();
-  openSettings();
+  $('settings').click();
 });
-$('close-settings').onclick = () => settings.close();
 $('add-videos').onclick = () => $('video-picker').click();
 settings.addEventListener('close', stopAudition);
 for (const tab of settings.querySelectorAll('[data-tab]')) tab.onclick = () => setTab(tab.dataset.tab);
@@ -752,9 +799,10 @@ function editVideo(video) {
   pendingEditorPosition = video.frame || null;
   $('edit-title').textContent = video.name;
   $('caption').value = video.caption;
+  $('caption-align').value = video.captionAlign || 'left';
   $('volume').value = video.volume;
   $('volume-value').value = video.volume + '%';
-  $('frame-rate').value = video.previewFps ?? 30;
+  previewFrameRate = video.previewFps ?? 30;
   $('video-editor').hidden = false;
   renderClips();
   preview.src = urlFor(video.file);
@@ -802,7 +850,7 @@ preview.addEventListener('playing', syncFrame);
 
 $('frame-seek').oninput = event => seekPreview(Number(event.target.value));
 function stepPreview(direction) {
-  const fps = Number($('frame-rate').value);
+  const fps = previewFrameRate;
   const position = pendingEditorPosition ?? preview.currentTime;
   const frame = Math.floor(position * fps + 0.01);
   seekPreview((frame + direction) / fps);
@@ -810,7 +858,8 @@ function stepPreview(direction) {
 
 $('frame-prev').onclick = () => stepPreview(-1);
 $('frame-next').onclick = () => stepPreview(1);
-$('frame-rate').onchange = event => updateEdited({ previewFps: Number(event.target.value) });
+$('preview-back').onclick = () => seekPreview((pendingEditorPosition ?? preview.currentTime) - 5);
+$('preview-forward').onclick = () => seekPreview((pendingEditorPosition ?? preview.currentTime) + 5);
 $('capture').onclick = async () => {
   const video = edited();
   if (!video) return;
@@ -1095,6 +1144,11 @@ $('caption').onchange = event => {
   renderLibrary();
 };
 
+$('caption-align').onchange = event => {
+  updateEdited({ captionAlign: event.target.value });
+  renderRail();
+};
+
 $('volume').oninput = event => {
   const volume = Number(event.target.value);
   $('volume-value').value = volume + '%';
@@ -1117,6 +1171,32 @@ function updatePreviewBoundary() {
   }
 }
 
+function setPreviewPlaying(playing) {
+  const control = $('audition');
+  control.textContent = playing ? 'Ⅱ' : '▶︎';
+  control.setAttribute('aria-label', playing ? 'プレビューを一時停止' : 'プレビューを再生');
+}
+
+function sampleFrameRate(token) {
+  if (!preview.requestVideoFrameCallback) return;
+  const rates = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 90, 120];
+  let first;
+  let samples = 0;
+  function measure(_now, frame) {
+    if (token !== previewIntent || preview.paused) return;
+    first ||= frame;
+    samples += 1;
+    const elapsed = frame.mediaTime - first.mediaTime;
+    if (elapsed >= 0.25 && frame.presentedFrames > first.presentedFrames) {
+      const estimate = (frame.presentedFrames - first.presentedFrames) / elapsed;
+      const nearest = rates.reduce((best, rate) => Math.abs(rate - estimate) < Math.abs(best - estimate) ? rate : best);
+      if (estimate >= 10 && estimate <= 150) previewFrameRate = Math.abs(nearest - estimate) < 1 ? nearest : estimate;
+    }
+    if (samples < 30) preview.requestVideoFrameCallback(measure);
+  }
+  preview.requestVideoFrameCallback(measure);
+}
+
 function stopAudition() {
   previewIntent += 1;
   previewStopAt = null;
@@ -1124,7 +1204,7 @@ function stopAudition() {
   if (!auditioning) return;
   auditioning = false;
   preview.pause();
-  $('audition').textContent = 'プレビューを再生';
+  setPreviewPlaying(false);
   syncFrame();
 }
 
@@ -1136,7 +1216,7 @@ async function playPreview(range) {
   const token = ++previewIntent;
   auditioning = true;
   previewStopAt = range?.end ?? null;
-  $('audition').textContent = 'プレビューを一時停止';
+  setPreviewPlaying(true);
   syncFrame();
   try {
     const position = range?.start ?? (preview.ended ? 0 : preview.currentTime);
@@ -1145,7 +1225,10 @@ async function playPreview(range) {
     }
     applyVolume(preview, video.volume);
     await preview.play();
-    if (token === previewIntent) syncFrame();
+    if (token === previewIntent) {
+      sampleFrameRate(token);
+      syncFrame();
+    }
   } catch (error) {
     if (token !== previewIntent) return;
     stopAudition();
@@ -1166,7 +1249,22 @@ function renderProjection() {
   $('transport').hidden = $('main-seek').hidden = !config.controlsVisible;
   $('settings').hidden = !config.gearVisible;
   $('playback-bar').hidden = !config.controlsVisible && !config.gearVisible;
+  $('projection-toggle').hidden = isIPhone;
   $('projection-toggle').textContent = projectionWindow ? '上映画面を閉じる' : '上映画面を開く';
+  $('open-pc-layout').hidden = isIPhone;
+  $('projection-guide-ipad').hidden = !isIPad;
+  $('projection-guide-phone').hidden = !isIPhone;
+  const desktopGuide = $('projection-guide-desktop');
+  desktopGuide.hidden = isIPad || isIPhone;
+  desktopGuide.textContent = isWindows
+    ? 'Windowsで画面を「拡張」にします。自動配置する場合は、ブラウザから画面の管理を求められたら許可してください。手動の場合は、上映ウィンドウを外部画面へ移して「全画面」を押します。'
+    : 'システムのディスプレイ設定で画面を拡張し、上映ウィンドウを外部画面へ移して「全画面」を押します。';
+  const displayButton = $('projection-display');
+  displayButton.hidden = !isIPad && !canPlaceProjection();
+  displayButton.disabled = projectionDisplayBusy;
+  displayButton.textContent = externalProjection
+    ? '上映画面をこの画面に戻す'
+    : '上映画面を別のディスプレイに全画面表示する';
 }
 
 function switchPlaybackTarget(video, position) {
@@ -1199,6 +1297,10 @@ function switchPlaybackTarget(video, position) {
 function stopProjection(status = '') {
   const popup = projectionWindow;
   projectionWindow = undefined;
+  externalProjection = pendingExternalProjection = undefined;
+  resolveProjectionConnection?.(false);
+  resolveProjectionConnection = undefined;
+  projectionConnection = undefined;
   clearInterval(projectionTimer);
   if (output !== inlinePlayer) switchPlaybackTarget(inlinePlayer, playbackPosition);
   if (popup && !popup.closed) popup.close();
@@ -1206,40 +1308,150 @@ function stopProjection(status = '') {
   message($('projection-status'), status);
 }
 
-$('projection-toggle').onclick = () => {
-  if (projectionWindow) {
-    stopProjection();
-    return;
+function openProjection(keepSettings = false) {
+  if (projectionWindow) return projectionConnection;
+  if (isIPad && (navigator.standalone || window.matchMedia('(display-mode: standalone)').matches)) {
+    message($('projection-status'), 'iPadの2画面上映はSafariでアプリのURLを開き、操作画面と上映画面を別々のSafariウインドウにしてください。');
+    return Promise.resolve(false);
   }
-  const popup = window.open('./projection.html', '_blank', 'popup,width=960,height=540');
+  if (location.protocol === 'file:') {
+    message($('projection-status'), '2画面上映には、GitHub PagesなどのHTTPS版をブラウザで開いてください。');
+    return Promise.resolve(false);
+  }
+  const popup = isIPad
+    ? window.open('./projection.html', '_blank')
+    : window.open('./projection.html', '_blank', 'popup,width=960,height=540');
   if (!popup) {
     message($('projection-status'), 'ブラウザのポップアップを許可してから、もう一度開いてください。');
-    return;
+    return Promise.resolve(false);
   }
   projectionWindow = popup;
+  projectionKeepSettings = keepSettings;
+  projectionConnection = new Promise(resolve => { resolveProjectionConnection = resolve; });
   projectionDeadline = performance.now() + 12000;
   projectionTimer = setInterval(() => {
     if (popup.closed) stopProjection();
     else if (output === inlinePlayer && performance.now() > projectionDeadline) {
-      stopProjection('上映画面を読み込めませんでした。オンラインでアプリを開き直してください。');
+      stopProjection(isIPad
+        ? '上映画面と接続できませんでした。Safariで操作画面を開き、アプリの「上映画面を開く」から開き直してください。'
+        : '上映画面を読み込めませんでした。オンラインでアプリを開き直してください。');
     }
   }, 400);
   renderProjection();
   message($('projection-status'), '上映画面を開いています。');
+  return projectionConnection;
+}
+
+$('projection-toggle').onclick = () => {
+  if (projectionWindow) stopProjection();
+  else openProjection();
 };
 
 window.addEventListener('message', event => {
   if (event.origin !== location.origin || !projectionWindow || event.source !== projectionWindow) return;
   if (event.data === 'exhibit-projection-ready') {
-    const output = projectionWindow.document.getElementById('projection-video');
-    if (!output) return;
-    switchPlaybackTarget(output, player.currentTime || 0);
-    settings.close();
-    message($('projection-status'), '上映画面に接続しています。');
+    const media = projectionWindow.document.getElementById('projection-video');
+    if (!media) return;
+    switchPlaybackTarget(media, player.currentTime || 0);
+    if (!projectionKeepSettings) settings.close();
+    if (!projectionKeepSettings) message($('projection-status'), '上映画面に接続しています。');
+    resolveProjectionConnection?.(true);
+    resolveProjectionConnection = undefined;
+  } else if (event.data === 'exhibit-projection-external-fullscreen' && pendingExternalProjection) {
+    externalProjection = pendingExternalProjection;
+    pendingExternalProjection = undefined;
+    renderProjection();
+    message($('projection-status'), '別のディスプレイで全画面表示しています。');
   } else if (event.data === 'exhibit-projection-closing') {
     stopProjection();
   }
 });
+
+function placeProjectionWindow(popup, display, width, height) {
+  const w = Math.min(width, display.availWidth);
+  const h = Math.min(height, display.availHeight);
+  const left = display.availLeft + Math.round((display.availWidth - w) / 2);
+  const top = display.availTop + Math.round((display.availHeight - h) / 2);
+  popup.moveTo(left, top);
+  popup.resizeTo(w, h);
+  popup.moveTo(left, top);
+}
+
+$('projection-display').onclick = async () => {
+  if (projectionDisplayBusy) return;
+  if (isIPad && !canPlaceProjection()) {
+    if (await openProjection(true)) {
+      projectionWindow?.focus();
+      message($('projection-status'), '上映画面を開きました。Safariの別ウインドウに分け、iPadOSの「ディスプレイに移動」を選んでください。移動先でウインドウを全画面にします。');
+    }
+    return;
+  }
+  if (!canPlaceProjection()) {
+    message($('projection-status'), 'この環境では、上映ウインドウを手動で外部画面へ移動してください。');
+    return;
+  }
+  projectionDisplayBusy = true;
+  renderProjection();
+  try {
+    if (externalProjection) {
+      const popup = projectionWindow;
+      const { home, width, height } = externalProjection;
+      if (popup.document.fullscreenElement) await popup.document.exitFullscreen();
+      if (popup !== projectionWindow) return;
+      placeProjectionWindow(popup, home, width, height);
+      externalProjection = undefined;
+      message($('projection-status'), '上映画面を操作画面と同じディスプレイに戻しました。');
+      return;
+    }
+
+    // Open while the tap is still active. Permissions and the separate page may take longer.
+    const connection = openProjection(true);
+    const popup = projectionWindow;
+    if (!popup) return;
+    const details = await window.getScreenDetails();
+    const home = details.currentScreen;
+    const external = details.screens.filter(screen => screen !== home &&
+      (screen.left !== home.left || screen.top !== home.top));
+    const destination = external.find(screen => !screen.isInternal) ?? external[0];
+    if (!destination) {
+      message($('projection-status'), '別のディスプレイが見つかりません。システムのディスプレイ設定で画面を拡張してください。');
+      return;
+    }
+    if (!await connection || popup !== projectionWindow) return;
+    if (popup.document.fullscreenElement) await popup.document.exitFullscreen();
+    if (popup !== projectionWindow) return;
+    pendingExternalProjection = undefined;
+    popup.exhibitFullscreenDestination = undefined;
+    const originalSize = { home, width: popup.outerWidth || 960, height: popup.outerHeight || 540 };
+    placeProjectionWindow(popup, destination, destination.availWidth, destination.availHeight);
+    externalProjection = originalSize;
+    try {
+      await popup.document.body.requestFullscreen({ screen: destination, navigationUI: 'hide' });
+      if (popup === projectionWindow) message($('projection-status'), '別のディスプレイで全画面表示しています。');
+    } catch {
+      if (popup === projectionWindow) {
+        placeProjectionWindow(popup, home, originalSize.width, originalSize.height);
+        externalProjection = undefined;
+        pendingExternalProjection = originalSize;
+        popup.exhibitFullscreenDestination = destination;
+        popup.document.getElementById('fullscreen').textContent = 'テレビに全画面表示';
+        popup.focus();
+        message($('projection-status'), 'ブラウザが全画面操作を求めています。タブレット側の上映ウィンドウで「テレビに全画面表示」を押してください。');
+      }
+    }
+  } catch (error) {
+    if (!externalProjection) {
+      message($('projection-status'), error.name === 'NotAllowedError'
+        ? 'ブラウザのサイト設定で「ウィンドウ管理」を許可してから、もう一度押してください。'
+        : '上映画面を移動できませんでした。ディスプレイの接続をご確認ください。');
+    } else {
+      message($('projection-status'), '上映画面を移動できませんでした。もう一度お試しください。');
+    }
+  } finally {
+    projectionDisplayBusy = false;
+    renderProjection();
+  }
+};
 
 window.addEventListener('pagehide', () => {
   projectionWindow?.close();
@@ -1410,6 +1622,10 @@ function placeObject(node, object) {
   node.style.top = object.y + '%';
   node.style.color = object.color;
   node.style.setProperty('--object-size', object.size + (object.type === 'text' ? 'cqw' : '%'));
+  if (object.type === 'text' && object.width !== undefined) {
+    node.style.width = object.width + '%';
+    node.style.maxWidth = '100%';
+  }
 }
 
 function objectNode(object) {
@@ -1447,7 +1663,9 @@ function renderMock(tab) {
       thumb.src = urlFor(entry.thumbnail);
       thumb.alt = '';
     }
-    tile.append(thumb, element('span', 'caption', entry.title));
+    const caption = element('span', 'caption', entry.title);
+    if (entry.align) caption.style.textAlign = entry.align;
+    tile.append(thumb, caption);
     track.append(tile);
   }
   renderRailSpacing(track, config);
@@ -1539,6 +1757,46 @@ function reorderObject(index, offset) {
   persistObjects();
 }
 
+function objectNumberField(label, min, max, unit, value, onInput, onChange) {
+  const field = element('div', 'fields');
+  field.append(element('span', '', label));
+  const slider = element('input');
+  Object.assign(slider, { type: 'range', min, max, step: 1, value });
+  slider.setAttribute('aria-label', label + 'のスライダー');
+  const number = element('input');
+  Object.assign(number, { type: 'number', min, max, step: 1, value });
+  number.setAttribute('aria-label', label + 'の数値');
+  let currentValue = value;
+  const update = proposed => {
+    currentValue = clamp(Math.round(proposed), min, max);
+    slider.value = number.value = currentValue;
+    onInput(currentValue);
+  };
+  slider.oninput = () => update(Number(slider.value));
+  slider.onchange = onChange;
+  number.oninput = () => {
+    const proposed = number.valueAsNumber;
+    if (!Number.isFinite(proposed) || proposed < min || proposed > max) return;
+    currentValue = Math.round(proposed);
+    slider.value = currentValue;
+    onInput(currentValue);
+    onChange();
+  };
+  number.onchange = () => {
+    update(Number.isFinite(number.valueAsNumber) ? number.valueAsNumber : currentValue);
+    onChange();
+  };
+  const adjust = delta => {
+    update(currentValue + delta);
+    onChange();
+  };
+  const row = element('div', 'object-adjustment');
+  row.append(button(label + 'を減らす', () => adjust(-1), 'secondary', '−'),
+    number, element('span', '', unit.trim()), button(label + 'を増やす', () => adjust(1), 'secondary', '＋'));
+  field.append(slider, row);
+  return field;
+}
+
 function renderObjectFields() {
   const fields = $('object-fields');
   const object = selectedObject();
@@ -1574,8 +1832,9 @@ function renderObjectFields() {
     fields.append(field);
   }
   const specs = [...objectSpecs, ['size', 'サイズ', 1, isText ? 20 : 100, '%']];
+  if (isText) specs.push(['width', 'テキストボックスの幅', 5, 100, '%']);
   for (const [key, label, min, max, unit] of specs) {
-    fields.append(rangeField(label, min, max, unit, object[key], value => update(key, value), save));
+    fields.append(objectNumberField(label, min, max, unit, object[key] ?? 85, value => update(key, value), save));
   }
 }
 
@@ -1624,6 +1883,10 @@ $('image-picker').onchange = async event => {
 };
 
 async function prepareOffline() {
+  if (location.protocol === 'file:') {
+    $('offline-state').textContent = 'ローカルファイルとして開いています';
+    return;
+  }
   if (!('serviceWorker' in navigator)) {
     $('offline-state').textContent = 'この環境ではオフライン起動を利用できません';
     return;
@@ -1678,6 +1941,9 @@ async function start() {
   prepareOffline();
 }
 window.addEventListener('resize', () => {
+  if (settings.open && settingsPosition) setSettingsPosition(settingsPosition.left, settingsPosition.top);
   if (activeTab === 'layout' || activeTab === 'objects') renderMock(activeTab);
 });
+document.documentElement.dataset.appLoaded = 'true';
+$('app-bootstrap-status').hidden = true;
 start();

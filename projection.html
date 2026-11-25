@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#000000">
+<link rel="icon" sizes="16x16 32x32 48x48" href="./favicon.ico">
 <link rel="stylesheet" href="./style.css">
 <title>展示動画プレイヤー | 上映画面</title>
 </head>
 <body class="projection-output">
   <video id="projection-video" playsinline preload="metadata" disablepictureinpicture aria-label="上映中の動画"></video>
   <button id="fullscreen" type="button" class="secondary fullscreen-button">全画面</button>
-  <script type="module" src="./projection.js"></script>
+  <script defer src="./projection.js"></script>
 </body>
 </html>

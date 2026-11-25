@@ -1,223 +1,21 @@
 <!doctype html>
-<html lang="ja"><head>
+<html lang="ja">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#101114">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="manifest" href="./manifest.webmanifest">
 <meta name="apple-mobile-web-app-title" content="展示動画プレイヤー">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="icon" href="apple-touch-icon.png">
-<style data-vb-source="style.css">:root {
-  color-scheme: dark;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
-  color: #f3f4f6;
-  background: #101114;
-  --muted: #a6aab5;
-  --accent: #b9f6dd;
-  --outline: #343740;
-  --surface: #191b20;
-}
-* { box-sizing: border-box }
-html, body { margin: 0; width: 100%; height: 100%; overflow: hidden }
-[hidden] { display: none !important }
-button, input, select { font: inherit }
-button { cursor: pointer; color: inherit }
-button:disabled { cursor: default; opacity: .42 }
-button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
-button, input, select { -webkit-tap-highlight-color: transparent }
-.screen, .mock { --inset: max(14px, env(safe-area-inset-left), env(safe-area-inset-right)); --controls: clamp(46px, 8dvh, 58px); --rail: 22%; --top: 4%; --video-width: 90%; --video-size: 1; --video-x: 50%; --thumb: 150px;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --reserved-controls: var(--controls);
-  --controls-bottom: var(--rail);
-  --frame-start: max(var(--top), var(--safe-top));
-  --frame-end-space: var(--reserved-controls);
-}
-.controls-hidden { --reserved-controls: 0px }
-[data-controls-position=top] {
-  --frame-start: calc(max(var(--top), var(--safe-top)) + var(--reserved-controls));
-  --frame-end-space: 0px;
-}
-.screen { container-type: inline-size; width: 100%; height: 100%; height: 100dvh; position: relative; isolation: isolate; overflow: hidden }
-.frame { position: absolute; left: var(--video-x); top: var(--frame-start); transform: translateX(-50%); width: var(--video-width); height: calc((100% - var(--frame-start) - var(--frame-end-space) - var(--rail)) * var(--video-size)); overflow: hidden; border-radius: 13px; background: #08090b; box-shadow: 0 0 0 1px #ffffff13 }
-.frame video { width: 100%; height: 100%; display: block; object-fit: contain }
-.empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; background: radial-gradient(ellipse at center, #191d24, #0c0e12 72%); text-align: center; padding: 10px }
-.empty-icon { border: 1px solid #ffffff24; background: #ffffff08; border-radius: 14px; display: grid; place-items: center; font-size: 30px; width: 52px; height: 48px; color: var(--accent); margin-bottom: 3px }
-.empty strong { font-size: clamp(17px, 3.5vh, 27px); letter-spacing: .03em }
-.empty p, .section-bar p, .message { color: var(--muted); margin: 0; font-size: .875rem }
-.primary, .secondary, .icon-button, .selection select { min-height: 42px; border-radius: 9px; padding: 8px 14px; font-weight: 650; font-size: .875rem }
-.primary { color: #101a16; background: var(--accent); border: 1px solid transparent }
-.primary:hover:not(:disabled) { background: #d7fce9 }
-.secondary, .icon-button, .selection select { background: #22252d; color: #f3f4f6; border: 1px solid var(--outline) }
-.secondary:hover:not(:disabled), .icon-button:hover { background: #2c303a }
-.controls { position: absolute; bottom: var(--controls-bottom); left: max(var(--inset), 5%); right: max(var(--inset), 5%); height: var(--controls); display: flex; align-items: center; gap: clamp(10px, 2vw, 24px); z-index: 5 }
-[data-controls-position=top] > .controls { top: var(--safe-top); bottom: auto }
-.controls-hidden > .controls { justify-content: flex-end; pointer-events: none }
-.controls-hidden > .controls .gear { pointer-events: auto; background: #101114e8 }
-.controls button { flex: 0 0 auto; min-width: 44px; min-height: 44px; border: 0; background: transparent; border-radius: 8px; position: relative }
-.controls button:hover:not(:disabled) { background: #ffffff15 }
-.transport { display: flex; align-items: center; gap: 4px }
-.skip span { position: absolute; inset: -1px 0 0; font-size: 32px; line-height: 43px }
-.skip small { position: absolute; left: 0; right: 0; top: 20px; font-size: 10px; font-weight: 750 }
-.play-icon { display: block; margin: auto; width: 0; height: 0; border: 9px solid transparent; border-left: 14px solid currentColor; border-right: 0 }
-.play-icon.pause { width: 14px; height: 17px; border: solid currentColor; border-width: 0 4px }
-.gear { font-size: 22px }
-.seek { min-width: 0; width: 100%; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; white-space: nowrap }
-.seek input { flex: 1; min-width: 25px }
-input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer }
-.rail { position: absolute; inset: auto 0 0; height: var(--rail); padding: 8px var(--inset) max(6px, env(safe-area-inset-bottom)); overflow-x: auto; overflow-y: hidden; background: #181a20; border-top: 1px solid #ffffff13; z-index: 2; scrollbar-width: thin }
-.rail-track { --rail-scale: 1; display: flex; align-items: stretch; width: max-content; min-width: 100%; height: 100%; justify-content: space-evenly; gap: calc(9px * var(--rail-scale)) }
-.rail-track[data-mode=custom] { justify-content: center; gap: 0 }
-.rail-track[data-mode=custom] > * { margin-inline-start: calc(var(--tile-gap, 0px) * var(--rail-scale)) }
-.tile { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 3px; flex: none; width: var(--thumb); min-width: 0; padding: 3px; text-align: left; color: #e6e8ed; background: transparent; border: 1px solid transparent; border-radius: 8px; overflow: hidden }
-.tile[aria-current=true] { border-color: var(--accent); background: #b9f6dd12; color: var(--accent) }
-.tile:hover { background-color: #ffffff10 }
-.tile .thumb { display: grid; place-items: center; color: #c1c6d0; background: #252831; border-radius: 5px; width: 100%; height: 100%; min-height: 0; object-fit: cover }
-.tile .caption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: .875rem; line-height: 1.15 }
-.decorations { position: absolute; inset: 0; z-index: 4; pointer-events: none }
-.decoration { position: absolute; transform: translate(-50%, -50%); display: grid; place-items: center; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere }
-.decoration.image { width: var(--object-size); height: auto; max-height: 100%; object-fit: contain }
-.decoration.rect, .decoration.circle { width: var(--object-size); aspect-ratio: 1; background: currentColor }
-.decoration.circle { border-radius: 50% }
-.decoration.text { max-width: 85%; font-size: var(--object-size); line-height: 1.15; font-weight: 700 }
-.notice { position: absolute; z-index: 6; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: max-content; max-width: 85%; padding: 10px 14px; border-radius: 8px; background: #242936; box-shadow: 0 5px 20px #0008; font-size: .875rem }
-dialog { width: min(850px, 94vw); max-height: min(90dvh, 850px); padding: 0; background: #191b20; color: inherit; border: 1px solid #3a3d48; border-radius: 17px; box-shadow: 0 20px 75px #000b; overflow: hidden }
-dialog[open] { display: flex; flex-direction: column }
-dialog::backdrop { background: #08090bbb }
-.settings-head, .section-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px }
-.settings-head { padding: 13px 19px 8px }
-h1, h2 { margin: 0; font-size: 1.15rem }
-h2 { font-size: 1rem }
-.icon-button { min-width: 44px; padding: 0 8px; font-size: 1.5rem }
-.tabs { display: flex; gap: 8px; padding: 0 19px; border-bottom: 1px solid var(--outline) }
-.tabs button { min-height: 42px; padding: 6px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted) }
-.tabs button[aria-pressed=true] { border-bottom-color: var(--accent); color: var(--accent) }
-.settings-body { overflow: auto; padding: 18px 19px; min-height: 0; overscroll-behavior: contain }
-.panel { display: grid; gap: 14px }
-.section-bar p { margin-top: 5px }
-.library-list, .object-list { display: grid; gap: 7px }
-.list-row { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px; background: #202229; border: 1px solid #30333c; border-radius: 9px }
-.list-row.active { border-color: #7da695 }
-.list-main { display: flex; gap: 9px; align-items: center; flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; padding: 0 4px; min-height: 44px }
-.list-main span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.list-main img { width: 56px; height: 34px; border-radius: 4px; object-fit: cover }
-.list-row .secondary { min-width: 42px; padding: 6px }
-.editor { display: grid; gap: 13px; padding: 12px; border: 1px solid var(--outline); border-radius: 10px }
-.editor h2 { overflow-wrap: anywhere }
-.edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px }
-.edit-details { min-width: 0; display: grid; gap: 13px; align-content: start }
-.edit-preview { min-width: 0; align-self: start }
-@media (min-width: 521px) and (min-height: 451px) { .edit-preview { position: sticky; top: 0 } }
-#preview-video { display: block; background: #08090a; width: 100%; height: clamp(85px, 27vh, 235px); object-fit: contain; border-radius: 7px }
-.frame-tools { display: flex; flex-wrap: wrap; gap: 5px }
-.frame-tools button { padding-inline: 7px }
-.fields, .fields label, .layout-fields label { display: grid; gap: 7px; align-content: start }
-.fields { gap: 13px }
-.fields input[type=text], .layout-fields input[type=text] { width: 100%; border: 1px solid var(--outline); border-radius: 7px; padding: 8px; min-height: 42px; background: #111318; color: inherit }
-.range-field span, .layout-fields label > span { display: flex; justify-content: space-between; gap: 5px }
-output { color: var(--accent); font-variant-numeric: tabular-nums }
-.layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; font-size: .875rem }
-.mock { position: relative; height: clamp(125px, 31dvh, 245px); aspect-ratio: var(--mock-ratio, 16 / 9); width: auto; max-width: 100%; justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden; container-type: inline-size; --controls: 12%; --safe-top: 0px; --safe-bottom: 0px }
-.mock .frame { display: grid; place-items: center; border-radius: 4px; border: 1px solid #606674; color: #c0c4ce; font-size: .8125rem }
-.mock-rail { position: absolute; inset: auto 0 0; height: var(--rail); overflow: auto hidden; padding: 3px var(--mock-inset, 4px); background: #242730; scrollbar-width: none }
-.mock .mock-tile { width: calc(var(--thumb) * var(--rail-scale)); height: 100%; padding: 0; gap: 2px; border: 0; border-radius: 3px }
-.mock-tile .thumb { border-radius: 2px }
-.mock-tile .caption { font-size: clamp(5px, 2.3cqw, 10px) }
-.mock-controls { gap: 4px; font-size: clamp(7px, 3cqw, 12px); white-space: nowrap }
-.mock-controls .gear { font-size: inherit }
-.mock-seek { height: 2px; flex: 1; min-width: 0; background: #8b8f9a; border-radius: 2px }
-.rail-settings { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--outline); border-radius: 10px }
-.rail-gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 8px; margin-top: 9px }
-.rail-gap { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 5px 8px; border-radius: 7px; background: #22252d; color: #e6e8ed; font-size: .875rem }
-.rail-gap > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-.rail-gap-value { display: flex; align-items: center; gap: 4px; color: var(--muted) }
-.rail-gap input { width: 4.4rem; min-height: 40px; padding: 5px; border: 1px solid var(--outline); border-radius: 5px; background: #111318; color: #f3f4f6; font-variant-numeric: tabular-nums }
-#rail-mode { max-width: 46vw }
-.mock .decoration { pointer-events: auto; touch-action: none; cursor: grab }
-.mock .decoration.selected { outline: 1px dashed white; outline-offset: 2px }
-#objects .section-bar h2 { margin-right: auto }
-.selection select { appearance: none; background: #22252d linear-gradient(45deg, transparent 50%, #bfc4ce 50%) calc(100% - 13px) 52% / 5px 5px no-repeat; padding-right: 22px }
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
-@media (max-width: 520px) {
-  .settings-head, .settings-body { padding-inline: 10px }
-  .edit-grid { grid-template-columns: minmax(0, 1fr) }
-  .controls { left: var(--inset); right: var(--inset); gap: 6px }
-}
-@media (max-height: 420px) {
-  .screen { --controls: 44px }
-  .rail { padding-top: 4px; padding-bottom: max(3px, env(safe-area-inset-bottom)) }
-  .empty-icon { width: 36px; height: 32px; font-size: 22px; margin: 0 }
-  .empty { gap: 5px }
-}
-
-.projection-layout { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between }
-.layout-checkbox { display: flex; gap: 8px; align-items: center; min-height: 34px }
-.layout-checkbox input { width: 18px; height: 18px; accent-color: var(--accent); flex: none }
-.projection-active {
-  --controls-bottom: var(--safe-bottom);
-  --thumbnail-top: var(--safe-top);
-  --thumbnail-bottom: calc(var(--safe-bottom) + var(--reserved-controls));
-}
-.projection-active[data-controls-position=top] {
-  --thumbnail-top: calc(var(--safe-top) + var(--reserved-controls));
-  --thumbnail-bottom: var(--safe-bottom);
-}
-.projection-active .frame { display: none }
-.projection-active[data-controls-position=top] .notice { top: calc(var(--thumbnail-top) + 6px) }
-.projection-active :is(.rail, .mock-rail) { top: var(--thumbnail-top); bottom: var(--thumbnail-bottom); height: auto }
-.projection-active:not(.projection-grid) .rail-track { height: var(--rail) }
-.projection-active:not(.projection-grid) .tile .thumb { object-fit: contain }
-.projection-grid :is(.rail, .mock-rail) { overflow: hidden auto }
-.projection-grid .rail-track {
-  display: grid;
-  grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
-  grid-template-rows: repeat(var(--grid-rows), minmax(clamp(90px, 20dvh, 160px), 1fr));
-  width: 100%;
-  height: 100%;
-  gap: var(--grid-gap);
-}
-.projection-grid .rail-track .tile { width: 100%; height: 100%; margin: 0; min-height: 0 }
-.projection-grid .rail-track .thumb { object-fit: contain }
-.mock.projection-grid .rail-track {
-  grid-template-rows: repeat(var(--grid-rows), minmax(18px, 1fr));
-}
-
-.projection-output { position: relative; width: 100%; height: 100%; background: #000 }
-.projection-output video { display: block; width: 100%; height: 100%; object-fit: contain }
-.projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }
-.projection-output:fullscreen .fullscreen-button { display: none }
-
-@media (max-width: 520px) {
-  .tabs { overflow-x: auto; gap: 4px; padding-inline: 10px }
-  .tabs button { flex: 0 0 auto; padding-inline: 7px; white-space: nowrap }
-}
-
-.clip-settings { display: grid; gap: 9px; border-top: 1px solid var(--outline); padding-top: 12px }
-.clip-settings .layout-checkbox { color: var(--muted); font-size: .875rem }
-#clip-editor input { font-variant-numeric: tabular-nums }
-.clip-time-field { display: grid; gap: 7px; align-content: start }
-.tile-order-name { flex: 1; min-width: 0; padding-inline: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-
-.preview-tools { margin-block: 8px }
-.clip-map { position: relative; min-height: 26px; border-radius: 5px; background: #101114; overflow: hidden }
-.clip-map-ranges { position: absolute; inset: 3px 0 }
-.clip-map-range { position: absolute; inset-block: 0; min-width: 2px; padding: 0; border: 0; border-radius: 2px; background: hsl(var(--clip-hue) 60% 52% / .72) }
-.clip-map-range:hover, .clip-map-range:focus-visible { z-index: 2; filter: brightness(1.3) }
-.clip-map-draft { z-index: 1; border: 2px solid var(--accent); background: transparent; pointer-events: none }
-#clip-map-position { position: absolute; z-index: 3; inset-block: 0; width: 2px; background: #fff; pointer-events: none }
-.clip-map-key { margin-top: 5px }
-#sequence-caption-row { display: grid; gap: 5px; font-size: .875rem }
-#sequence-caption { width: 100%; min-height: 42px; background: #111318; color: inherit; border: 1px solid var(--outline); border-radius: 7px; padding: 8px }
-.standby-video { position: absolute; inset: 0 }
-video[data-inactive-stream] { opacity: 0; pointer-events: none }
-</style>
+<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+<link rel="icon" sizes="16x16 32x32 48x48" href="./favicon.ico">
+<link rel="stylesheet" href="./style.css">
 <title>展示動画プレイヤー</title>
 </head>
 <body>
 <main id="screen" class="screen">
   <div id="frame" class="frame">
-    <video id="player" playsinline="" webkit-playsinline="" preload="metadata" aria-label="選択した動画"></video>
+    <video id="player" playsinline webkit-playsinline preload="metadata" aria-label="選択した動画"></video>
     <div id="empty" class="empty">
       <span class="empty-icon" aria-hidden="true">▷</span>
       <strong id="empty-title">動画がありません</strong>
@@ -227,19 +25,19 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
   <div id="decorations" class="decorations" aria-hidden="true"></div>
   <div id="playback-bar" class="controls">
     <div id="transport" class="transport" aria-label="再生コントロール">
-      <button id="back" class="skip" aria-label="10秒戻す" title="10秒戻す" disabled=""><span aria-hidden="true">↶</span><small>10</small></button>
-      <button id="toggle" class="play" aria-label="再生" title="再生" disabled=""><span class="play-icon" aria-hidden="true"></span></button>
-      <button id="forward" class="skip" aria-label="10秒送る" title="10秒送る" disabled=""><span aria-hidden="true">↷</span><small>10</small></button>
+      <button id="back" class="skip" aria-label="10秒戻す" title="10秒戻す" disabled><span aria-hidden="true">↶</span><small>10</small></button>
+      <button id="toggle" class="play" aria-label="再生" title="再生" disabled><span class="play-icon" aria-hidden="true"></span></button>
+      <button id="forward" class="skip" aria-label="10秒送る" title="10秒送る" disabled><span aria-hidden="true">↷</span><small>10</small></button>
     </div>
-    <label id="main-seek" class="seek"><span id="elapsed">0:00</span><input id="timeline" type="range" min="0" max="1" step="0.01" value="0" aria-label="再生位置" disabled=""><span id="duration">0:00</span></label>
+    <label id="main-seek" class="seek"><span id="elapsed">0:00</span><input id="timeline" type="range" min="0" max="1" step="0.01" value="0" aria-label="再生位置" disabled><span id="duration">0:00</span></label>
     <button id="settings" class="gear" aria-label="設定" title="設定">⚙</button>
   </div>
   <div id="rail" class="rail" aria-label="動画一覧"><div id="rail-track" class="rail-track"></div></div>
-  <div id="notice" class="notice" role="status" hidden=""></div>
+  <div id="notice" class="notice" role="status" hidden></div>
 </main>
 
 <dialog id="settings-dialog" aria-labelledby="settings-title">
-  <header class="settings-head">
+  <header id="settings-handle" class="settings-head">
     <h1 id="settings-title">設定</h1>
     <button id="close-settings" class="icon-button" aria-label="設定を閉じる" title="設定を閉じる">×</button>
   </header>
@@ -248,29 +46,28 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
     <button data-tab="layout" aria-pressed="false">レイアウト</button>
     <button data-tab="objects" aria-pressed="false">表示要素</button>
     <button data-tab="projection" aria-pressed="false">2画面上映</button>
+    <button data-tab="manual" aria-pressed="false">説明書</button>
   </nav>
   <div class="settings-body">
+    <p id="app-bootstrap-status" class="message" role="status" hidden>アプリの機能を読み込めませんでした。配備したファイルが揃っていることを確認し、ページを開き直してください。</p>
     <section id="library" class="panel">
-      <div class="section-bar"><div><h2>登録済みの動画</h2><p id="offline-state" role="status">オフライン利用の準備中</p></div><button id="add-videos" class="primary">＋ 動画を追加</button></div>
-      <p id="import-state" class="message" role="status" hidden=""></p>
+      <div class="section-bar"><div><h2>登録済みの動画</h2><p id="offline-state" role="status">オフライン利用の準備中</p></div><button id="add-videos" class="primary" disabled>＋ 動画を追加</button></div>
+      <p id="import-state" class="message" role="status" hidden></p>
       <div id="library-list" class="library-list"></div>
-      <section id="tile-order-panel" class="editor" hidden="" aria-labelledby="tile-order-title">
+      <section id="tile-order-panel" class="editor" hidden aria-labelledby="tile-order-title">
         <div class="section-bar"><h2 id="tile-order-title">サムネイルの表示順</h2><button id="reset-tile-order" class="secondary">動画の順に戻す</button></div>
         <div id="tile-order-list" class="library-list"></div>
       </section>
-      <section id="video-editor" class="editor" hidden="">
+      <section id="video-editor" class="editor" hidden>
         <div class="section-bar"><h2 id="edit-title">動画を編集</h2><button id="close-editor" class="secondary">閉じる</button></div>
         <div class="edit-grid">
-          <div class="edit-preview"><video id="preview-video" playsinline="" muted="" preload="auto" aria-label="区間編集プレビュー"></video>
+          <div class="edit-preview"><video id="preview-video" playsinline muted preload="auto" aria-label="区間編集プレビュー"></video>
           <div class="frame-tools preview-tools">
-            <button id="audition" class="secondary">プレビューを再生</button>
-            <button id="frame-prev" class="secondary" aria-label="前のフレーム">◀ 1コマ</button>
-            <button id="frame-next" class="secondary" aria-label="次のフレーム">1コマ ▶</button>
-            <label class="selection"><span class="sr-only">コマ送りのフレームレート</span><select id="frame-rate">
-              <option value="23.976">23.976 fps</option><option value="24">24 fps</option><option value="25">25 fps</option>
-              <option value="29.97">29.97 fps</option><option value="30" selected="">30 fps</option><option value="50">50 fps</option>
-              <option value="59.94">59.94 fps</option><option value="60">60 fps</option>
-            </select></label>
+            <button id="preview-back" class="secondary" aria-label="5秒戻す">◀︎5秒</button>
+            <button id="frame-prev" class="secondary" aria-label="前のフレーム">◀︎1コマ</button>
+            <button id="audition" class="secondary" aria-label="プレビューを再生">▶︎</button>
+            <button id="frame-next" class="secondary" aria-label="次のフレーム">1コマ▶︎</button>
+            <button id="preview-forward" class="secondary" aria-label="5秒送る">5秒▶︎</button>
           </div>
           <div id="clip-map" class="clip-map" aria-label="素材上の再生区間">
             <div id="clip-map-ranges" class="clip-map-ranges"></div><span id="clip-map-position" aria-hidden="true"></span>
@@ -280,13 +77,14 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
           <div class="frame-tools"><button id="capture" class="secondary">動画全体のサムネイルに使う</button></div></div>
           <div class="edit-details">
           <div class="fields"><label>動画全体の表示名<input id="caption" type="text" maxlength="120" placeholder="サムネイルの下に表示"></label>
+          <label class="selection">動画全体の表示名の配置<select id="caption-align"><option value="left">左寄せ</option><option value="center">中央寄せ</option><option value="right">右寄せ</option></select></label>
           <label class="range-field"><span>再生音量 <output id="volume-value">100%</output></span><input id="volume" type="range" min="0" max="100" value="100"></label>
           </div>
-        <p id="edit-state" class="message" role="status" hidden=""></p>
+        <p id="edit-state" class="message" role="status" hidden></p>
         <section class="clip-settings" aria-labelledby="clips-title">
           <div class="section-bar"><h2 id="clips-title">再生区間</h2><button id="add-clip" class="secondary">＋ 区間を追加</button></div>
-          <label class="layout-checkbox"><input id="show-full-video" type="checkbox" checked="">動画全体のサムネイルも表示</label>
-          <div id="clip-sequence-settings" class="rail-settings" hidden="">
+          <label class="layout-checkbox"><input id="show-full-video" type="checkbox" checked>動画全体のサムネイルも表示</label>
+          <div id="clip-sequence-settings" class="rail-settings" hidden>
             <label class="selection projection-layout"><span>区間のサムネイル</span>
               <select id="clip-mode"><option value="separate">区間ごとに表示</option><option value="combined">1枚にまとめる</option><option value="both">区間ごととまとめたものを表示</option></select>
             </label>
@@ -294,7 +92,7 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
             <p class="message">まとめた場合は、下の一覧の順番で再生します。</p>
           </div>
           <div id="clips-list" class="library-list"></div>
-          <div id="clip-editor" class="editor" hidden="">
+          <div id="clip-editor" class="editor" hidden>
             <p class="message">時刻は「分:秒」または秒数で入力できます。例 3:30</p>
             <div class="layout-fields">
               <div class="clip-time-field"><label>開始時刻<input id="clip-start" type="text" aria-label="開始時刻" placeholder="0:00"></label><button id="clip-start-now" class="secondary" aria-label="開始時刻にプレビュー位置を使う">プレビュー位置を使う</button></div>
@@ -306,7 +104,7 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
               <button id="clip-thumbnail-auto" class="secondary">開始時刻の画像に戻す</button>
               <button id="preview-clip" class="secondary">この区間を試聴</button>
             </div>
-            <p id="clip-status" class="message" role="status" hidden=""></p>
+            <p id="clip-status" class="message" role="status" hidden></p>
             <div class="frame-tools">
               <button id="save-clip" class="primary">区間を保存</button><button id="cancel-clip" class="secondary">閉じる</button>
             </div>
@@ -316,13 +114,13 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
         </div>
       </section>
     </section>
-    <section id="layout" class="panel" hidden="">
+    <section id="layout" class="panel" hidden>
       <div class="section-bar"><h2>画面レイアウト</h2><button id="reset-layout" class="secondary">初期配置に戻す</button></div>
       <label class="selection projection-layout"><span>編集する画面</span>
-        <select id="layout-target"><option value="single">1画面</option><option value="pc">2画面上映のPC側</option></select>
+        <select id="layout-target"><option value="single">1画面</option><option value="pc">2画面上映の操作側</option></select>
       </label>
       <div id="layout-preview" class="mock" aria-hidden="true"></div>
-      <section id="pc-thumbnail-settings" class="rail-settings" aria-labelledby="pc-layout-title" hidden="">
+      <section id="pc-thumbnail-settings" class="rail-settings" aria-labelledby="pc-layout-title" hidden>
         <div class="section-bar">
           <h2 id="pc-layout-title">サムネイルの配置</h2>
           <label class="selection"><span class="sr-only">PC操作画面の並べ方</span>
@@ -344,7 +142,7 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
             <select id="rail-mode"><option value="even">均等に並べる</option><option value="custom">間隔を個別に調整</option></select>
           </label>
         </div>
-        <div id="rail-custom" hidden="">
+        <div id="rail-custom" hidden>
           <p id="rail-gap-help" class="message">各サムネイルと、その一つ前のサムネイルとの間隔を指定します。</p>
           <div id="rail-gaps" class="rail-gaps"></div>
         </div>
@@ -356,29 +154,66 @@ video[data-inactive-stream] { opacity: 0; pointer-events: none }
         <label class="selection projection-layout"><span>表示位置</span>
           <select id="controls-position"><option value="top">画面上部</option><option value="bottom">画面下部</option></select>
         </label>
-        <label id="pc-gear-row" class="layout-checkbox" hidden=""><input id="pc-gear-visible" type="checkbox">設定ボタンを表示（非表示時は S キーで設定）</label>
+        <label id="pc-gear-row" class="layout-checkbox" hidden><input id="pc-gear-visible" type="checkbox">設定ボタンを表示（非表示時は S キーで設定）</label>
       </section>
     </section>
-    <section id="objects" class="panel" hidden="">
-      <div class="section-bar"><h2>表示要素</h2><label class="selection"><span class="sr-only">追加する要素</span><select id="object-type"><option value="text">テキスト</option><option value="rect">四角</option><option value="circle">円</option><option value="image">イラスト画像</option></select></label><button id="add-object" class="primary">＋ 追加</button></div>
+    <section id="objects" class="panel" hidden>
+      <div class="section-bar"><h2>表示要素</h2><label class="selection"><span class="sr-only">追加する要素</span><select id="object-type"><option value="text">テキスト</option><option value="rect">四角</option><option value="circle">円</option><option value="image">イラスト画像</option></select></label><button id="add-object" class="primary" disabled>＋ 追加</button></div>
       <div id="object-preview" class="mock"></div>
       <div id="object-list" class="object-list"></div>
-      <div id="object-fields" class="layout-fields" hidden=""></div>
+      <div id="object-fields" class="layout-fields" hidden></div>
     </section>
-    <section id="projection" class="panel" hidden="">
+    <section id="projection" class="panel" hidden>
       <div class="section-bar">
         <h2>テレビで上映</h2>
-        <button id="projection-toggle" class="primary">上映画面を開く</button>
+        <button id="projection-toggle" class="primary" hidden>上映画面を開く</button>
       </div>
-      <p class="message">Windowsで Win + P →「拡張」を選び、上映ウィンドウをテレビ側に移動して「全画面」にしてください。</p>
-      <p id="projection-status" class="message" role="status" hidden=""></p>
-      <button id="open-pc-layout" class="secondary">PC操作画面のレイアウトを編集</button>
+      <button id="projection-display" class="secondary" hidden>上映画面を別のディスプレイに全画面表示する</button>
+      <div id="projection-guide-ipad" class="projection-guide" hidden>
+        <p class="message">外部ディスプレイにウインドウを移動できるiPadで使えます。機種とiPadOSの対応を確認してください。</p>
+        <ol>
+          <li>テレビやプロジェクタを有線で接続し、iPadの設定でステージマネージャをオンにします。</li>
+          <li>Safariでアプリを開き、「上映画面を別のディスプレイに全画面表示する」を押します。上映画面がタブで開いた場合は、そのタブをSafariの別ウインドウに移します。</li>
+          <li>上映用ウインドウの上部にあるウインドウコントロールで「ディスプレイに移動」を選ぶか、ポインタで外部画面へドラッグします。外部画面で「全画面」を押すか、iPadOSのウインドウコントロールで全画面にします。</li>
+          <li>元のSafariウインドウをiPad側に残し、サムネイルや再生操作を使います。</li>
+        </ol>
+        <p class="message">画面全体を映す場合は、HDMI接続やAirPlayの画面ミラーリングを使います。</p>
+        <p class="message"><a href="https://support.apple.com/ja-jp/105075" target="_blank" rel="noopener">対応するiPadを確認</a>　<a href="https://support.apple.com/ja-jp/guide/ipad/ipad8baf19a7/27/ipados/27" target="_blank" rel="noopener">ウインドウの移動手順</a></p>
+      </div>
+      <p id="projection-guide-phone" class="message" hidden>iPhoneでは、HDMI接続やAirPlayの画面ミラーリングで、アプリの画面をテレビに映せます。</p>
+      <p id="projection-guide-desktop" class="message" hidden></p>
+      <p id="projection-status" class="message" role="status" hidden></p>
+      <button id="open-pc-layout" class="secondary" hidden>操作画面のレイアウトを編集</button>
+    </section>
+    <section id="manual" class="panel" hidden>
+      <div class="section-bar"><h2>使い方</h2><a class="primary manual-link" href="./manual.html" target="_blank" rel="noopener">HTML版の説明書を開く</a></div>
+      <p class="message">動画の登録や区間編集、テレビ・プロジェクタへの接続手順を別のタブで開きます。</p>
     </section>
   </div>
 </dialog>
-<input id="video-picker" type="file" accept="video/*,.mp4,.mov,.m4v,.webm" multiple="" hidden="">
-<input id="image-picker" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic" hidden="">
-<script type="module" src="./app.js"></script>
-
-
-</body></html>
+<input id="video-picker" type="file" accept="video/*,.mp4,.mov,.m4v,.webm" multiple hidden>
+<input id="image-picker" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/heic" hidden>
+<script>
+(() => {
+  const dialog = document.getElementById('settings-dialog');
+  const button = document.getElementById('settings');
+  const status = document.getElementById('app-bootstrap-status');
+  button.addEventListener('click', () => {
+    if (!dialog.open) {
+      try { dialog.showModal(); }
+      catch { dialog.setAttribute('open', ''); }
+    }
+    status.hidden = document.documentElement.dataset.appLoaded === 'true';
+    dialog.dispatchEvent(new Event('exhibit-settings-open'));
+  });
+  document.getElementById('close-settings').addEventListener('click', () => {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  });
+})();
+</script>
+<script defer src="./storage.js"></script>
+<script defer src="./clips.js"></script>
+<script defer src="./app.js"></script>
+</body>
+</html>

@@ -201,3 +201,21 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 #sequence-caption { width: 100%; min-height: 42px; background: #111318; color: inherit; border: 1px solid var(--outline); border-radius: 7px; padding: 8px }
 .standby-video { position: absolute; inset: 0 }
 video[data-inactive-stream] { opacity: 0; pointer-events: none }
+
+#settings-dialog[data-positioned] { position: fixed; inset: auto; margin: 0 }
+.settings-head { cursor: grab; touch-action: none; user-select: none }
+.settings-head:active { cursor: grabbing }
+.settings-head button { cursor: pointer }
+.object-adjustment { display: flex; align-items: center; gap: 5px; flex-wrap: wrap }
+.object-adjustment button { min-width: 42px; padding-inline: 8px }
+.object-adjustment input[type=number] { width: 5rem; min-height: 42px; border: 1px solid var(--outline); border-radius: 6px; padding: 5px; background: #111318; color: inherit }
+
+.projection-guide { display: grid; gap: 8px }
+.projection-guide ol { margin: 0; padding-inline-start: 1.5rem }
+.projection-guide li + li { margin-top: 4px }
+.projection-guide a { color: var(--accent) }
+
+.manual-link { display: inline-flex; align-items: center; text-decoration: none }
+.manual-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
+.tabs { overflow-x: auto }
+.tabs button { flex: 0 0 auto; white-space: nowrap }

@@ -1,7 +1,11 @@
 const SCOPE = new URL(self.registration.scope);
 const CACHE_PREFIX = 'exhibit-video-player-shell:' + SCOPE.pathname + ':';
-const CACHE = CACHE_PREFIX + 'v5';
-const FILES = ['./', './index.html', './style.css', './app.js', './storage.js', './manifest.webmanifest', './projection.html', './projection.js', './clips.js'];
+const CACHE = CACHE_PREFIX + 'v12';
+const FILES = [
+  './', './index.html', './style.css', './app.js', './storage.js', './manifest.webmanifest',
+  './projection.html', './projection.js', './clips.js', './manual.html',
+  './apple-touch-icon.png', './icon-192.png', './icon-512.png', './favicon.ico',
+];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES.map(path => new Request(new URL(path, SCOPE), { cache: 'reload' })))));
