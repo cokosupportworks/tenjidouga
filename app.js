@@ -1254,10 +1254,11 @@ function renderProjection() {
   $('open-pc-layout').hidden = isIPhone;
   $('projection-guide-ipad').hidden = !isIPad;
   $('projection-guide-phone').hidden = !isIPhone;
+  $('projection-fullscreen-help').hidden = isIPhone;
   const desktopGuide = $('projection-guide-desktop');
   desktopGuide.hidden = isIPad || isIPhone;
   desktopGuide.textContent = isWindows
-    ? 'Windowsで画面を「拡張」にします。自動配置する場合は、ブラウザから画面の管理を求められたら許可してください。手動の場合は、上映ウィンドウを外部画面へ移して「全画面」を押します。'
+    ? '端末の画面で大きく見るには、上映ウィンドウの「拡大表示」を使います。テレビに映す場合は、Windowsで画面を「拡張」にします。自動配置にはブラウザの画面管理の許可が必要です。手動の場合は、上映ウィンドウを外部画面に移し、「外部画面で全画面」を押します。'
     : 'システムのディスプレイ設定で画面を拡張し、上映ウィンドウを外部画面へ移して「全画面」を押します。';
   const displayButton = $('projection-display');
   displayButton.hidden = !isIPad && !canPlaceProjection();
@@ -1892,7 +1893,7 @@ async function prepareOffline() {
     return;
   }
   try {
-    const registration = await navigator.serviceWorker.register('./sw.js');
+    const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
     const show = () => {
       $('offline-state').textContent = 'オフラインで起動できます';
     };

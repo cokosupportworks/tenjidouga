@@ -176,7 +176,12 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 .projection-output { position: relative; width: 100%; height: 100%; background: #000 }
 .projection-output video { display: block; width: 100%; height: 100%; object-fit: contain }
 .projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }
-.projection-output:fullscreen .fullscreen-button { display: none }
+.projection-output .enlarge-window-button { position: absolute; left: 16px; bottom: 16px; background: #202229; color: #fff }
+.projection-output:fullscreen .enlarge-window-button { display: none }
+.projection-output:fullscreen:not(.show-fullscreen-controls) .fullscreen-button:not(:focus-visible) {
+  opacity: 0;
+  pointer-events: none;
+}
 
 @media (max-width: 520px) {
   .tabs { overflow-x: auto; gap: 4px; padding-inline: 10px }
