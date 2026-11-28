@@ -159,6 +159,7 @@
             <select id="rail-mode"><option value="even">均等に並べる</option><option value="custom">間隔を個別に調整</option></select>
           </label>
         </div>
+        <div id="rail-uniform-gap" class="layout-fields"></div>
         <div id="rail-custom" hidden>
           <p id="rail-gap-help" class="message">各サムネイルと、その一つ前のサムネイルとの間隔を指定します。</p>
           <div id="rail-gaps" class="rail-gaps"></div>
@@ -205,8 +206,9 @@
       <button id="open-pc-layout" class="secondary" hidden>操作画面のレイアウトを編集</button>
     </section>
     <section id="manual" class="panel" hidden>
-      <div class="section-bar"><h2>使い方</h2><a class="primary manual-link" href="./manual.html" target="_blank" rel="noopener">HTML版の説明書を開く</a></div>
-      <p class="message">動画の登録や区間編集、テレビ・プロジェクタへの接続手順を別のタブで開きます。</p>
+      <div class="section-bar"><h2>使い方</h2><a id="open-manual" class="primary manual-link" href="./manual.html" target="_blank" rel="noopener">HTML版の説明書を開く</a></div>
+      <p class="message">動画の登録や区間編集、テレビ・プロジェクタへの接続手順を開きます。</p>
+      <p id="manual-status" class="message" role="status" hidden></p>
       <div id="web-update-help">
         <div class="section-bar"><h2>アプリの更新</h2><a class="secondary manual-link" href="./update.html">アップデートを確認</a></div>
         <p class="message">オンラインで更新できます。登録した動画と設定はそのまま使えます。</p>

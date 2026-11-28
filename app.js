@@ -23,32 +23,39 @@ const isIPhone = /iPhone|iPod/i.test(navigator.userAgent);
 const isWindows = /Windows/i.test(navigator.userAgent);
 const canPlaceProjection = () => !isIPhone && location.protocol !== 'file:' &&
   typeof window.getScreenDetails === 'function';
+const standardThumbWidth = 178;
+const minThumbWidth = 100;
+const maxThumbWidth = 400;
+const thumbWidthSpec = ['thumbWidth', 'サムネイルの最大幅（高さに対する割合）', minThumbWidth, maxThumbWidth, '%'];
+const defaultGap = 9;
+const maxGap = 1000;
 const defaults = {
-  top: 4, width: 90, height: 100, x: 50, rail: 22, thumb: 150, railMode: 'even',
+  top: 4, width: 90, height: 100, x: 50, rail: 22, thumbWidth: standardThumbWidth, railMode: 'even',
+  uniformGap: defaultGap,
   controlsVisible: true, controlsPosition: 'bottom', gearVisible: true,
 };
 const pcDefaults = {
-  arrangement: 'grid', columns: 0, gridGap: 10, rail: 28, thumb: 150, railMode: 'even',
+  arrangement: 'grid', columns: 0, gridGap: 10, rail: 28, thumbWidth: standardThumbWidth, railMode: 'even',
+  uniformGap: defaultGap,
   controlsVisible: true, controlsPosition: 'top', gearVisible: true,
 };
 const pcRailSpecs = [
   ['rail', 'サムネイル帯の高さ', 14, 100, '%'],
-  ['thumb', 'サムネイルの幅', 70, 440, ' px'],
+  thumbWidthSpec,
 ];
 const pcGridSpecs = [['gridGap', 'グリッドの間隔', 0, 48, ' px']];
-const defaultGap = 9;
-const maxGap = 1000;
 const layoutSpecs = [
   ['top', '上部の余白', 0, 20, '%'],
   ['width', '動画枠の幅', 32, 100, '%'],
   ['height', '動画枠の高さ', 30, 100, '%'],
   ['x', '動画枠の横位置', 0, 100, '%'],
   ['rail', 'サムネイル帯の高さ', 14, 37, '%'],
-  ['thumb', 'サムネイルの幅', 70, 260, ' px'],
+  thumbWidthSpec,
 ];
 const typeLabels = { text: 'テキスト', rect: '四角', circle: '円', image: 'イラスト画像' };
 const objectSpecs = [['x', '横位置', 0, 100, '%'], ['y', '縦位置', 0, 100, '%']];
 const urls = new Map();
+const thumbnailRatios = new WeakMap();
 let videos = [];
 let decorations = [];
 let layout = loadLayout();
@@ -104,16 +111,24 @@ const edited = () => videos.find(video => video.id === editorId);
 const selectedObject = () => decorations.find(object => object.id === objectId);
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
+function migratedThumbWidth(width, legacyWidth, fallback = standardThumbWidth) {
+  if (Number.isFinite(width)) return clamp(width, minThumbWidth, maxThumbWidth);
+  if (!Number.isFinite(legacyWidth)) return fallback;
+  return clamp(Math.round(standardThumbWidth * legacyWidth / 150), minThumbWidth, maxThumbWidth);
+}
+
 function loadLayout(saved = {}) {
-  const { projection, projectionLayout, ...single } = saved;
+  const { projection, projectionLayout, thumb, ...single } = saved;
+  const { thumb: pcThumb, ...pc } = projection || {};
+  const thumbWidth = migratedThumbWidth(single.thumbWidth, thumb);
   return {
-    ...defaults, ...single, gaps: { ...single.gaps },
+    ...defaults, ...single, thumbWidth, gaps: { ...single.gaps },
     projection: {
       ...pcDefaults,
       arrangement: projectionLayout ?? pcDefaults.arrangement,
-      thumb: single.thumb ?? pcDefaults.thumb,
       railMode: single.railMode ?? pcDefaults.railMode,
-      ...projection,
+      ...pc,
+      thumbWidth: migratedThumbWidth(pc.thumbWidth, pcThumb, thumbWidth),
       gaps: { ...(projection?.gaps ?? single.gaps) },
     },
   };
@@ -224,30 +239,40 @@ function applyVolume(media, value) {
 
 function renderRailSpacing(track, config) {
   track.dataset.mode = config.railMode;
+  track.style.setProperty('--rail-gap', config.uniformGap + 'px');
   Array.from(track.children).forEach((tile, index) => {
     const gap = index === 0 ? 0 : (config.gaps[tile.dataset.id] ?? defaultGap);
     tile.style.setProperty('--tile-gap', gap + 'px');
   });
 }
 
+function renderTile(entry, previewOnly = false) {
+  const tile = previewOnly ? element('div', 'tile') : button(entry.title, () => selectEntry(entry), 'tile', '');
+  tile.title = entry.title;
+  tile.dataset.id = entry.id;
+  tile.setAttribute('aria-current', String(entry.id === activeTileId()));
+  const thumb = entry.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
+  if (entry.thumbnail) {
+    const cached = thumbnailRatios.get(entry.thumbnail);
+    if (cached) tile.style.setProperty('--image-ratio', cached);
+    else thumb.addEventListener('load', () => {
+      const ratio = thumb.naturalWidth / thumb.naturalHeight;
+      if (!Number.isFinite(ratio) || !ratio) return;
+      thumbnailRatios.set(entry.thumbnail, ratio);
+      tile.style.setProperty('--image-ratio', ratio);
+    }, { once: true });
+    thumb.alt = '';
+    thumb.src = urlFor(entry.thumbnail);
+  }
+  const caption = element('span', 'caption', entry.title);
+  if (entry.align) caption.style.textAlign = entry.align;
+  tile.append(thumb, caption);
+  return tile;
+}
+
 function renderRail() {
   const scroll = rail.scrollLeft;
-  railTrack.replaceChildren();
-  for (const entry of tiles()) {
-    const tile = button(entry.title, () => selectEntry(entry), 'tile', '');
-    tile.title = entry.title;
-    tile.dataset.id = entry.id;
-    tile.setAttribute('aria-current', String(entry.id === activeTileId()));
-    const thumb = entry.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
-    if (entry.thumbnail) {
-      thumb.src = urlFor(entry.thumbnail);
-      thumb.alt = '';
-    }
-    const caption = element('span', 'caption', entry.title);
-    if (entry.align) caption.style.textAlign = entry.align;
-    tile.append(thumb, caption);
-    railTrack.append(tile);
-  }
+  railTrack.replaceChildren(...tiles().map(entry => renderTile(entry)));
   renderTileOrder();
   renderProjection();
   rail.scrollLeft = scroll;
@@ -609,6 +634,15 @@ document.addEventListener('keydown', event => {
 $('add-videos').onclick = () => {
   if (desktop) importDesktopVideos();
   else $('video-picker').click();
+};
+if (desktop) $('open-manual').onclick = async event => {
+  event.preventDefault();
+  message($('manual-status'), '');
+  try {
+    await desktop.openManual();
+  } catch {
+    message($('manual-status'), '説明書を読み込めませんでした。アプリを開き直してお試しください。');
+  }
 };
 settings.addEventListener('close', stopAudition);
 for (const tab of settings.querySelectorAll('[data-tab]')) tab.onclick = () => setTab(tab.dataset.tab);
@@ -1750,7 +1784,8 @@ function applyLayout(node, projected) {
     '--video-size': layout.height / 100,
     '--video-x': clamp(layout.x, layout.width / 2, 100 - layout.width / 2) + '%',
     '--rail': config.rail + '%',
-    '--thumb': config.thumb + 'px',
+    '--rail-fraction': config.rail / 100,
+    '--thumb-ratio': config.thumbWidth / 100,
     '--grid-columns': columns,
     '--grid-rows': rows,
     '--grid-gap': (config.gridGap ?? pcDefaults.gridGap) + 'px',
@@ -1810,6 +1845,12 @@ function renderRailSettings() {
   const custom = config.railMode === 'custom';
   $('rail-mode').value = config.railMode;
   $('rail-custom').hidden = !custom;
+  const uniform = $('rail-uniform-gap');
+  uniform.hidden = custom;
+  if (!custom) uniform.replaceChildren(rangeField('均等配置の間隔', 0, maxGap, ' px', config.uniformGap, value => {
+    config.uniformGap = value;
+    renderLayout();
+  }, () => storePreference('layout', layout)));
   if (!custom) return;
 
   const gaps = $('rail-gaps');
@@ -1819,27 +1860,40 @@ function renderRailSettings() {
     ? '動画を2本以上登録すると、間隔を調整できます。'
     : '各サムネイルと、その一つ前のサムネイルとの間隔を指定します。';
   entries.slice(1).forEach(({ id, title }, index) => {
-    const field = element('label', 'rail-gap');
+    const field = element('div', 'rail-gap');
     const name = element('span', '', (index + 2) + '番目の前 · ' + title);
     name.title = name.textContent;
     const value = element('span', 'rail-gap-value');
     const input = element('input');
+    const slider = element('input');
+    const initial = config.gaps[id] ?? defaultGap;
     Object.assign(input, {
       type: 'number', inputMode: 'numeric', min: 0, max: maxGap, step: 1,
-      value: config.gaps[id] ?? defaultGap,
+      value: initial,
     });
+    Object.assign(slider, { type: 'range', min: 0, max: maxGap, value: initial });
     input.setAttribute('aria-label', name.textContent + ' の間隔（px）');
+    slider.setAttribute('aria-label', name.textContent + ' の間隔スライダー');
+    const setGap = proposed => {
+      config.gaps[id] = clamp(Math.round(proposed), 0, maxGap);
+      renderLayout();
+    };
+    slider.oninput = () => {
+      setGap(slider.valueAsNumber);
+      input.value = slider.value;
+    };
+    slider.onchange = () => storePreference('layout', layout);
     input.oninput = () => {
       if (!Number.isFinite(input.valueAsNumber)) return;
-      config.gaps[id] = clamp(Math.round(input.valueAsNumber), 0, maxGap);
-      renderLayout();
+      setGap(input.valueAsNumber);
+      slider.value = config.gaps[id];
     };
     input.onchange = () => {
       input.value = config.gaps[id] ?? defaultGap;
       storePreference('layout', layout);
     };
     value.append(input, element('span', '', 'px'));
-    field.append(name, value);
+    field.append(name, slider, value);
     gaps.append(field);
   });
 }
@@ -1929,26 +1983,16 @@ function renderMock(tab) {
   const config = screenLayout(projected);
   const mock = $(isLayout ? 'layout-preview' : 'object-preview');
   const frame = element('div', 'frame', '動画枠');
-  const previous = mock.querySelector('.mock-rail');
+  const sameScreen = projected === (output !== inlinePlayer);
+  const previous = sameScreen ? rail : mock.querySelector('.rail');
   const scroll = { left: previous?.scrollLeft || 0, top: previous?.scrollTop || 0 };
-  const strip = element('div', 'mock-rail');
+  const strip = element('div', 'rail');
   const track = element('div', 'rail-track');
   strip.append(track);
-  for (const entry of tiles()) {
-    const tile = element('div', 'tile mock-tile');
-    tile.dataset.id = entry.id;
-    const thumb = entry.thumbnail ? element('img', 'thumb') : element('span', 'thumb', '▷');
-    if (entry.thumbnail) {
-      thumb.src = urlFor(entry.thumbnail);
-      thumb.alt = '';
-    }
-    const caption = element('span', 'caption', entry.title);
-    if (entry.align) caption.style.textAlign = entry.align;
-    tile.append(thumb, caption);
-    track.append(tile);
-  }
+  track.replaceChildren(...tiles().map(entry => renderTile(entry, true)));
   renderRailSpacing(track, config);
   const controls = element('div', 'controls mock-controls');
+  controls.hidden = !config.controlsVisible && !config.gearVisible;
   if (config.controlsVisible) {
     controls.append(element('span', '', '↶　▶　↷'), element('span', 'mock-seek'));
   }
@@ -1960,15 +2004,17 @@ function renderMock(tab) {
     overlay.append(node);
   }
   const { clientWidth, clientHeight } = $('screen');
-  mock.style.setProperty('--mock-ratio', clientWidth + ' / ' + clientHeight);
-  applyLayout(mock, projected);
-  mock.replaceChildren(frame, strip, controls, overlay);
-  const scale = mock.clientWidth / Math.max(1, clientWidth);
-  const inset = parseFloat(getComputedStyle(rail).paddingLeft) || 0;
-  mock.style.setProperty('--mock-inset', inset * scale + 'px');
-  mock.style.setProperty('--grid-gap', (config.gridGap ?? pcDefaults.gridGap) * scale + 'px');
-  track.style.setProperty('--rail-scale', scale);
+  const width = Math.max(1, clientWidth), height = Math.max(1, clientHeight);
+  mock.style.setProperty('--mock-aspect', width / height);
+  const previewScreen = element('div', 'screen preview-screen');
+  previewScreen.style.width = width + 'px';
+  previewScreen.style.height = height + 'px';
+  applyLayout(previewScreen, projected);
+  previewScreen.append(frame, strip, controls, overlay);
+  mock.replaceChildren(previewScreen);
+  previewScreen.style.transform = 'scale(' + mock.clientWidth / width + ')';
   strip.scrollTo(scroll.left, scroll.top);
+  if (sameScreen) strip.addEventListener('scroll', () => rail.scrollTo(strip.scrollLeft, strip.scrollTop));
 }
 
 function attachDrag(node, object, mock) {

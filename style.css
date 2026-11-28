@@ -16,7 +16,7 @@ button { cursor: pointer; color: inherit }
 button:disabled { cursor: default; opacity: .42 }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
 button, input, select { -webkit-tap-highlight-color: transparent }
-.screen, .mock { --inset: max(14px, env(safe-area-inset-left), env(safe-area-inset-right)); --controls: clamp(46px, 8dvh, 58px); --rail: 22%; --top: 4%; --video-width: 90%; --video-size: 1; --video-x: 50%; --thumb: 150px;
+.screen { --inset: max(14px, env(safe-area-inset-left), env(safe-area-inset-right)); --controls: clamp(46px, 8dvh, 58px); --rail: 22%; --rail-fraction: .22; --top: 4%; --video-width: 90%; --video-size: 1; --video-x: 50%; --thumb-ratio: 1.78;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --reserved-controls: var(--controls);
@@ -57,14 +57,15 @@ button, input, select { -webkit-tap-highlight-color: transparent }
 .seek input { flex: 1; min-width: 25px }
 input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer }
 .rail { position: absolute; inset: auto 0 0; height: var(--rail); padding: 8px var(--inset) max(6px, env(safe-area-inset-bottom)); overflow-x: auto; overflow-y: hidden; background: #181a20; border-top: 1px solid #ffffff13; z-index: 2; scrollbar-width: thin }
-.rail-track { --rail-scale: 1; display: flex; align-items: stretch; width: max-content; min-width: 100%; height: 100%; justify-content: space-evenly; gap: calc(9px * var(--rail-scale)) }
-.rail-track[data-mode=custom] { justify-content: center; gap: 0 }
-.rail-track[data-mode=custom] > * { margin-inline-start: calc(var(--tile-gap, 0px) * var(--rail-scale)) }
-.tile { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 3px; flex: none; width: var(--thumb); min-width: 0; padding: 3px; text-align: left; color: #e6e8ed; background: transparent; border: 1px solid transparent; border-radius: 8px; overflow: hidden }
-.tile[aria-current=true] { border-color: var(--accent); background: #b9f6dd12; color: var(--accent) }
-.tile:hover { background-color: #ffffff10 }
-.tile .thumb { display: grid; place-items: center; color: #c1c6d0; background: #252831; border-radius: 5px; width: 100%; height: 100%; min-height: 0; object-fit: cover }
-.tile .caption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: .875rem; line-height: 1.15 }
+.rail { container-type: size }
+.rail-track { --band-height: 100cqh; display: flex; align-items: stretch; width: max-content; min-width: 100%; height: 100%; justify-content: center; gap: var(--rail-gap, 9px) }
+.rail-track[data-mode=custom] { gap: 0 }
+.rail-track[data-mode=custom] > * { margin-inline-start: var(--tile-gap, 0px) }
+.tile { --caption-size: .875rem; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 3px; flex: none; width: calc(max(1px, var(--band-height) - 3px - var(--caption-size) * 1.15) * min(var(--thumb-ratio), var(--image-ratio, var(--thumb-ratio)))); min-width: 0; padding: 0; text-align: left; color: #e6e8ed; background: transparent; border: 0; border-radius: 5px; overflow: hidden }
+button.tile:hover:not([aria-current=true]) { box-shadow: inset 0 0 0 1px var(--outline) }
+.tile[aria-current=true] { outline: 1px solid var(--accent); outline-offset: -1px; color: var(--accent) }
+.tile .thumb { display: grid; place-items: center; color: #c1c6d0; border-radius: 5px; width: 100%; height: 100%; min-height: 0; object-fit: contain }
+.tile .caption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--caption-size); line-height: 1.15; min-height: 1.15em }
 .decorations { position: absolute; inset: 0; z-index: 4; pointer-events: none }
 .decoration { position: absolute; transform: translate(-50%, -50%); display: grid; place-items: center; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere }
 .decoration.image { width: var(--object-size); height: auto; max-height: 100%; object-fit: contain }
@@ -110,21 +111,18 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 .layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; font-size: .875rem }
 .set-fields { max-width: 36rem; margin: 12px 0 8px; align-items: end }
 #sets .message { margin-bottom: 6px }
-.mock { position: relative; height: clamp(125px, 31dvh, 245px); aspect-ratio: var(--mock-ratio, 16 / 9); width: auto; max-width: 100%; justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden; container-type: inline-size; --controls: 12%; --safe-top: 0px; --safe-bottom: 0px }
-.mock .frame { display: grid; place-items: center; border-radius: 4px; border: 1px solid #606674; color: #c0c4ce; font-size: .8125rem }
-.mock-rail { position: absolute; inset: auto 0 0; height: var(--rail); overflow: auto hidden; padding: 3px var(--mock-inset, 4px); background: #242730; scrollbar-width: none }
-.mock .mock-tile { width: calc(var(--thumb) * var(--rail-scale)); height: 100%; padding: 0; gap: 2px; border: 0; border-radius: 3px }
-.mock-tile .thumb { border-radius: 2px }
-.mock-tile .caption { font-size: clamp(5px, 2.3cqw, 10px) }
-.mock-controls { gap: 4px; font-size: clamp(7px, 3cqw, 12px); white-space: nowrap }
-.mock-controls .gear { font-size: inherit }
+.mock { --mock-aspect: 1.78; position: relative; width: min(100%, calc(clamp(125px, 31dvh, 245px) * var(--mock-aspect))); aspect-ratio: var(--mock-aspect); justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden }
+.preview-screen { position: absolute; left: 0; top: 0; transform-origin: top left }
+.mock .frame { display: grid; place-items: center; border: 1px solid #606674; color: #c0c4ce }
+.mock-controls { white-space: nowrap }
 .mock-seek { height: 2px; flex: 1; min-width: 0; background: #8b8f9a; border-radius: 2px }
 .rail-settings { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--outline); border-radius: 10px }
 .rail-gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 8px; margin-top: 9px }
-.rail-gap { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 5px 8px; border-radius: 7px; background: #22252d; color: #e6e8ed; font-size: .875rem }
-.rail-gap > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.rail-gap { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 5px 8px; border-radius: 7px; background: #22252d; color: #e6e8ed; font-size: .875rem }
+.rail-gap > span:first-child { grid-column: 1 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.rail-gap input[type=range] { min-width: 0; margin: 0 }
 .rail-gap-value { display: flex; align-items: center; gap: 4px; color: var(--muted) }
-.rail-gap input { width: 4.4rem; min-height: 40px; padding: 5px; border: 1px solid var(--outline); border-radius: 5px; background: #111318; color: #f3f4f6; font-variant-numeric: tabular-nums }
+.rail-gap input[type=number] { width: 4.4rem; min-height: 40px; padding: 5px; border: 1px solid var(--outline); border-radius: 5px; background: #111318; color: #f3f4f6; font-variant-numeric: tabular-nums }
 #rail-mode { max-width: 46vw }
 .mock .decoration { pointer-events: auto; touch-action: none; cursor: grab }
 .mock .decoration.selected { outline: 1px dashed white; outline-offset: 2px }
@@ -157,10 +155,9 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 }
 .projection-active .frame { display: none }
 .projection-active[data-controls-position=top] .notice { top: calc(var(--thumbnail-top) + 6px) }
-.projection-active :is(.rail, .mock-rail) { top: var(--thumbnail-top); bottom: var(--thumbnail-bottom); height: auto }
-.projection-active:not(.projection-grid) .rail-track { height: var(--rail) }
-.projection-active:not(.projection-grid) .tile .thumb { object-fit: contain }
-.projection-grid :is(.rail, .mock-rail) { overflow: hidden auto }
+.projection-active .rail { top: var(--thumbnail-top); bottom: var(--thumbnail-bottom); height: auto }
+.projection-active:not(.projection-grid) .rail-track { --band-height: calc(100cqh * var(--rail-fraction)); height: var(--rail) }
+.projection-grid .rail { overflow: hidden auto }
 .projection-grid .rail-track {
   display: grid;
   grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
@@ -171,10 +168,6 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 }
 .projection-grid .rail-track .tile { width: 100%; height: 100%; margin: 0; min-height: 0 }
 .projection-grid .rail-track .thumb { object-fit: contain }
-.mock.projection-grid .rail-track {
-  grid-template-rows: repeat(var(--grid-rows), minmax(18px, 1fr));
-}
-
 .projection-output { position: relative; width: 100%; height: 100%; background: #000 }
 .projection-output video { display: block; width: 100%; height: 100%; object-fit: contain }
 .projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }

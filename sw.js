@@ -1,6 +1,6 @@
 const SCOPE = new URL(self.registration.scope);
 const CACHE_PREFIX = 'exhibit-video-player-shell:' + SCOPE.pathname + ':';
-const CACHE = CACHE_PREFIX + 'v17';
+const CACHE = CACHE_PREFIX + 'v19';
 const FILES = [
   './', './index.html', './style.css', './app.js', './storage.js', './manifest.webmanifest',
   './projection.html', './projection.js', './clips.js', './manual.html',
