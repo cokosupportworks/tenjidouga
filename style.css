@@ -108,6 +108,8 @@ h2 { font-size: 1rem }
 .range-field span, .layout-fields label > span { display: flex; justify-content: space-between; gap: 5px }
 output { color: var(--accent); font-variant-numeric: tabular-nums }
 .layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; font-size: .875rem }
+.set-fields { max-width: 36rem; margin: 12px 0 8px; align-items: end }
+#sets .message { margin-bottom: 6px }
 .mock { position: relative; height: clamp(125px, 31dvh, 245px); aspect-ratio: var(--mock-ratio, 16 / 9); width: auto; max-width: 100%; justify-self: center; background: #0c0d11; border: 1px solid #484c58; border-radius: 9px; overflow: hidden; container-type: inline-size; --controls: 12%; --safe-top: 0px; --safe-bottom: 0px }
 .mock .frame { display: grid; place-items: center; border-radius: 4px; border: 1px solid #606674; color: #c0c4ce; font-size: .8125rem }
 .mock-rail { position: absolute; inset: auto 0 0; height: var(--rail); overflow: auto hidden; padding: 3px var(--mock-inset, 4px); background: #242730; scrollbar-width: none }
@@ -177,6 +179,11 @@ output { color: var(--accent); font-variant-numeric: tabular-nums }
 .projection-output video { display: block; width: 100%; height: 100%; object-fit: contain }
 .projection-output .fullscreen-button { position: absolute; right: 16px; bottom: 16px; background: #202229; color: #fff }
 .projection-output .enlarge-window-button { position: absolute; left: 16px; bottom: 16px; background: #202229; color: #fff }
+.desktop-projection-bar { position: absolute; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: #101114e6; -webkit-app-region: drag }
+.desktop-projection-bar button { -webkit-app-region: no-drag }
+.desktop-projected .desktop-projection-bar { display: none }
+#desktop-display-row { margin-bottom: 8px }
+.relink-source { grid-column: 1 / -1; justify-self: start }
 .projection-output:fullscreen .enlarge-window-button { display: none }
 .projection-window-status { position: absolute; right: 16px; bottom: 68px; max-width: min(32rem, calc(100% - 32px)); margin: 0; padding: 8px 12px; border-radius: 8px; background: #202229; color: #fff }
 .projection-output:fullscreen .projection-window-status { display: none }

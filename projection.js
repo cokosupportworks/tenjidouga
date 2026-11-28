@@ -1,6 +1,7 @@
 const fullscreen = document.getElementById('fullscreen');
 const enlargeWindow = document.getElementById('enlarge-window');
 const externalStatus = document.getElementById('external-fullscreen-status');
+const isDesktop = location.protocol === 'exhibit:';
 const isWindows = /Windows/i.test(navigator.userAgent);
 const isIPad = /iPad/i.test(navigator.userAgent) ||
   (/Mac/i.test(navigator.platform) && navigator.maxTouchPoints > 1);
@@ -9,7 +10,12 @@ let hideControlsTimer;
 let originalWindow;
 
 fullscreen.textContent = fullscreenLabel;
-enlargeWindow.hidden = !isWindows;
+fullscreen.hidden = isDesktop;
+enlargeWindow.hidden = isDesktop || !isWindows;
+if (isDesktop) {
+  document.getElementById('desktop-projection-bar').hidden = false;
+  document.getElementById('close-desktop-projection').onclick = () => window.close();
+}
 
 enlargeWindow.addEventListener('click', () => {
   if (originalWindow) {

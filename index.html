@@ -43,6 +43,7 @@
   </header>
   <nav class="tabs" aria-label="設定の項目">
     <button data-tab="library" aria-pressed="true">動画</button>
+    <button data-tab="sets" aria-pressed="false">上映セット</button>
     <button data-tab="layout" aria-pressed="false">レイアウト</button>
     <button data-tab="objects" aria-pressed="false">表示要素</button>
     <button data-tab="projection" aria-pressed="false">2画面上映</button>
@@ -51,7 +52,7 @@
   <div class="settings-body">
     <p id="app-bootstrap-status" class="message" role="status" hidden>アプリの機能を読み込めませんでした。配備したファイルが揃っていることを確認し、ページを開き直してください。</p>
     <section id="library" class="panel">
-      <div class="section-bar"><div><h2>登録済みの動画</h2><p id="offline-state" role="status">オフライン利用の準備中</p></div><button id="add-videos" class="primary" disabled>＋ 動画を追加</button></div>
+      <div class="section-bar"><div><h2>登録済みの動画</h2><p id="library-set-name"></p><p id="offline-state" role="status">オフライン利用の準備中</p></div><button id="add-videos" class="primary" disabled>＋ 動画を追加</button></div>
       <p id="import-state" class="message" role="status" hidden></p>
       <div id="library-list" class="library-list"></div>
       <section id="tile-order-panel" class="editor" hidden aria-labelledby="tile-order-title">
@@ -114,6 +115,22 @@
         </div>
       </section>
     </section>
+    <section id="sets" class="panel" hidden>
+      <h2>上映セット</h2>
+      <p id="active-set-name" class="message"></p>
+      <p class="message">動画、サムネイル、再生区間、レイアウト、表示要素は使用中のセットに自動保存されます。</p>
+      <div class="layout-fields set-fields">
+        <label class="selection">保存済みセット<select id="saved-sets" disabled></select></label>
+        <button id="load-set" class="primary" type="button" disabled>切り替える</button>
+      </div>
+      <label class="fields set-fields">セット名<input id="set-name" type="text" maxlength="60" placeholder="例　展示A" disabled></label>
+      <div class="frame-tools">
+        <button id="new-set" class="primary" type="button" disabled>新しいセットを作る</button>
+        <button id="rename-set" class="secondary" type="button" disabled>使用中のセット名を変更</button>
+      </div>
+      <p class="message">新しいセットは空の状態で開きます。今のセットは保存されます。</p>
+      <p id="set-status" class="message" role="status" hidden></p>
+    </section>
     <section id="layout" class="panel" hidden>
       <div class="section-bar"><h2>画面レイアウト</h2><button id="reset-layout" class="secondary">初期配置に戻す</button></div>
       <label class="selection projection-layout"><span>編集する画面</span>
@@ -169,6 +186,7 @@
         <button id="projection-toggle" class="primary" hidden>上映画面を開く</button>
       </div>
       <button id="projection-display" class="secondary" hidden>上映画面を別のディスプレイに全画面表示する</button>
+      <label id="desktop-display-row" class="selection" hidden>上映先のディスプレイ<select id="desktop-display" disabled></select></label>
       <div id="projection-guide-ipad" class="projection-guide" hidden>
         <p class="message">外部ディスプレイにウインドウを移動できるiPadで使えます。機種とiPadOSの対応を確認してください。</p>
         <ol>
@@ -189,8 +207,10 @@
     <section id="manual" class="panel" hidden>
       <div class="section-bar"><h2>使い方</h2><a class="primary manual-link" href="./manual.html" target="_blank" rel="noopener">HTML版の説明書を開く</a></div>
       <p class="message">動画の登録や区間編集、テレビ・プロジェクタへの接続手順を別のタブで開きます。</p>
-      <div class="section-bar"><h2>アプリの更新</h2><a class="secondary manual-link" href="./update.html">アップデートを確認</a></div>
-      <p class="message">オンラインで更新できます。登録した動画と設定はそのまま使えます。</p>
+      <div id="web-update-help">
+        <div class="section-bar"><h2>アプリの更新</h2><a class="secondary manual-link" href="./update.html">アップデートを確認</a></div>
+        <p class="message">オンラインで更新できます。登録した動画と設定はそのまま使えます。</p>
+      </div>
     </section>
   </div>
 </dialog>

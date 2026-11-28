@@ -1,5 +1,6 @@
 'use strict';
-const { readVideos, addVideo, removeVideo, updateVideo, readPreference, writePreference } = window.exhibitStorage;
+const { defaultSet, openSet, readSets, readActiveSet, setActiveSet, renameSet } = window.exhibitStorage;
+const desktop = window.exhibitDesktop;
 const { parseTimecode, formatTimecode, playbackTiles, sequenceId, sequenceDuration, sequencePosition, sequenceSeek } = window.exhibitClips;
 
 const $ = id => document.getElementById(id);
@@ -75,6 +76,12 @@ let previewFrameRate = 30;
 let settingsPosition;
 let dialogDrag;
 let ready = false;
+let savedSets = [defaultSet];
+let activeSetId = defaultSet.id;
+let setStorage = openSet(activeSetId);
+let setBusy = false;
+let deletingVideos = 0;
+let importingImages = 0;
 let projectionWindow;
 let projectionTimer;
 let projectionDeadline;
@@ -85,6 +92,8 @@ let externalProjection;
 let pendingExternalProjection;
 let projectionDisplayBusy = false;
 let playbackPosition = 0;
+let sourceIntent = 0;
+let desktopDisplayRequest = 0;
 
 const current = () => videos.find(video => video.id === currentId);
 const activeClip = () => current()?.clips?.find(clip => clip.id === currentClipId);
@@ -129,6 +138,8 @@ function urlFor(blob) {
   if (!urls.has(blob)) urls.set(blob, URL.createObjectURL(blob));
   return urls.get(blob);
 }
+
+const videoUrl = video => video.source || urlFor(video.file);
 
 function releaseUrl(blob) {
   if (!urls.has(blob)) return;
@@ -179,8 +190,10 @@ function saveError() {
 }
 
 function storePreference(key, value) {
-  return writePreference(key, value).catch(saveError);
+  return setStorage.writePreference(key, value).catch(saveError);
 }
+
+const updateVideo = (id, changes) => setStorage.updateVideo(id, changes);
 
 function applyVolume(media, value) {
   const volume = clamp(value / 100, 0, 1);
@@ -298,7 +311,7 @@ function prepareNextCut() {
   const media = standby;
   const cut = { id: next.id, start: next.start, ready: false };
   preloadedCut = cut;
-  const url = urlFor(video.file);
+  const url = videoUrl(video);
   if (media.getAttribute('src') !== url) {
     media.src = url;
     media.load();
@@ -375,6 +388,7 @@ function clipBoundary() {
 }
 
 function clearPlayback() {
+  sourceIntent += 1;
   clearTimeout(clipEndTimer);
   stopActive();
   discardPreload();
@@ -463,7 +477,20 @@ async function startAt(position, resume) {
   }
 }
 
-function selectEntry({ video, clip, id, sequence }) {
+function selectEntry(entry) {
+  const intent = ++sourceIntent;
+  if (!entry.video.source) {
+    playEntry(entry);
+    return;
+  }
+  desktop.sourceAvailable(entry.video.source).catch(() => false).then(available => {
+    if (intent !== sourceIntent || !videos.includes(entry.video)) return;
+    if (available) playEntry(entry);
+    else notify('元ファイルが見つかりません。動画の設定で「元ファイルを選び直す」を押してください。');
+  });
+}
+
+function playEntry({ video, clip, id, sequence }) {
   const previous = current();
   if (!clip && activeTileId() === id) {
     if (player.ended) player.currentTime = 0;
@@ -478,7 +505,7 @@ function selectEntry({ video, clip, id, sequence }) {
   sequenceActive = Boolean(sequence);
   playbackPosition = clip?.start ?? 0;
   if (previous !== video) {
-    player.src = urlFor(video.file);
+    player.src = videoUrl(video);
     player.load();
     if (previous && previous.id !== editorId) releaseUrl(previous.file);
   }
@@ -529,6 +556,8 @@ function setTab(tab, target = output === inlinePlayer ? 'single' : 'pc') {
   }
   if (tab === 'layout') renderLayoutSettings();
   if (tab === 'projection') renderProjection();
+  if (tab === 'projection' && desktop) refreshDesktopDisplays();
+  if (tab === 'sets') renderSets();
   if (tab === 'layout' || tab === 'objects') renderMock(tab);
 }
 
@@ -577,9 +606,113 @@ document.addEventListener('keydown', event => {
   event.preventDefault();
   $('settings').click();
 });
-$('add-videos').onclick = () => $('video-picker').click();
+$('add-videos').onclick = () => {
+  if (desktop) importDesktopVideos();
+  else $('video-picker').click();
+};
 settings.addEventListener('close', stopAudition);
 for (const tab of settings.querySelectorAll('[data-tab]')) tab.onclick = () => setTab(tab.dataset.tab);
+
+function renderSets() {
+  const picker = $('saved-sets');
+  const previous = picker.value;
+  picker.replaceChildren(...savedSets.map(set => new Option(set.name, set.id)));
+  picker.value = savedSets.some(set => set.id === previous) ? previous : activeSetId;
+  const active = savedSets.find(set => set.id === activeSetId);
+  $('active-set-name').textContent = '使用中：' + active.name;
+  $('library-set-name').textContent = '上映セット：' + active.name;
+  const unavailable = !ready || setBusy;
+  picker.disabled = $('set-name').disabled = $('new-set').disabled = $('rename-set').disabled = unavailable;
+  $('load-set').disabled = unavailable || picker.value === activeSetId;
+}
+
+function enteredSetName(exceptId) {
+  const input = $('set-name');
+  const name = input.value.trim();
+  if (!name) {
+    message($('set-status'), 'セット名を入力してください。');
+  } else if (savedSets.some(set => set.id !== exceptId && set.name === name)) {
+    message($('set-status'), '同じ名前のセットがあります。別の名前を入力してください。');
+  } else {
+    return name;
+  }
+  input.focus();
+  return '';
+}
+
+async function switchSet(setId, newSet) {
+  if (!ready || setBusy || setId === activeSetId) return;
+  if (importBusy || clipSavePending || deletingVideos || importingImages) {
+    message($('set-status'), '動画や設定の保存が完了してから、もう一度押してください。');
+    return;
+  }
+  if (clipDraft) {
+    message($('set-status'), '動画の設定で編集中の再生区間を保存するか、閉じてから切り替えてください。');
+    return;
+  }
+  setBusy = true;
+  renderSets();
+  message($('set-status'), 'セットを開いています。');
+  const body = settings.querySelector('.settings-body');
+  body.inert = true;
+  try {
+    const next = openSet(setId);
+    const data = await next.read();
+    await setActiveSet(setId, newSet);
+    closeEditor();
+    clearPlayback();
+    for (const blob of urls.keys()) releaseUrl(blob);
+    if (newSet) savedSets.push(newSet);
+    activeSetId = setId;
+    setStorage = next;
+    applySet(data);
+    objectId = undefined;
+    rail.scrollLeft = rail.scrollTop = 0;
+    $('saved-sets').value = activeSetId;
+    $('set-name').value = '';
+    message($('import-state'), '');
+    refreshSetScreen();
+    message($('set-status'), 'セットを開きました。');
+  } catch (error) {
+    message($('set-status'), error.name === 'ConstraintError'
+      ? '同じ名前のセットがあります。別の名前を入力してください。'
+      : 'セットを開けませんでした。端末の保存領域を確認してください。');
+  } finally {
+    body.inert = false;
+    setBusy = false;
+    renderSets();
+  }
+}
+
+$('saved-sets').onchange = renderSets;
+$('load-set').onclick = () => switchSet($('saved-sets').value);
+$('new-set').onclick = () => {
+  const name = enteredSetName();
+  if (!name) return;
+  const set = { id: crypto.randomUUID(), name };
+  return switchSet(set.id, set);
+};
+$('rename-set').onclick = async () => {
+  if (!ready || setBusy) return;
+  const name = enteredSetName(activeSetId);
+  if (!name) return;
+  const active = savedSets.find(set => set.id === activeSetId);
+  setBusy = true;
+  renderSets();
+  try {
+    await renameSet(active.id, name);
+    active.name = name;
+    $('set-name').value = '';
+    message($('set-status'), 'セット名を保存しました。');
+  } catch (error) {
+    message($('set-status'), error.name === 'ConstraintError'
+      ? '同じ名前のセットがあります。別の名前を入力してください。'
+      : 'セット名を保存できませんでした。');
+  } finally {
+    setBusy = false;
+    renderSets();
+  }
+};
 
 function renderLibrary() {
   const list = $('library-list');
@@ -601,6 +734,11 @@ function renderLibrary() {
     up.disabled = index === 0;
     down.disabled = index === videos.length - 1;
     row.append(open, up, down, button('登録解除', () => deleteVideo(video)));
+    if (video.source) {
+      const relink = button('元ファイルを選び直す', () => relinkVideo(video), 'secondary relink-source');
+      relink.disabled = importBusy;
+      row.append(relink);
+    }
     list.append(row);
   });
 }
@@ -667,8 +805,10 @@ function forgetTiles(ids) {
 
 async function deleteVideo(video) {
   if (!confirm('「' + (video.caption || video.name) + '」の登録を解除しますか？')) return;
+  deletingVideos += 1;
   try {
-    await removeVideo(video.id);
+    await setStorage.removeVideo(video.id);
+    if (video.source) desktop.forgetSource(video.source).catch(() => {});
     if (editorId === video.id) closeEditor();
     if (currentId === video.id) clearPlayback();
     videos = videos.filter(item => item.id !== video.id);
@@ -682,6 +822,8 @@ async function deleteVideo(video) {
     await persistOrder();
   } catch {
     message($('import-state'), '登録を解除できませんでした。');
+  } finally {
+    deletingVideos -= 1;
   }
 }
 
@@ -722,7 +864,7 @@ async function inspectVideo(file, frameAt = 0) {
   media.playsInline = true;
   media.muted = true;
   media.preload = 'auto';
-  const localUrl = URL.createObjectURL(file);
+  const localUrl = typeof file === 'string' ? file : URL.createObjectURL(file);
   try {
     const metadata = mediaEvent(media, 'loadedmetadata');
     media.src = localUrl;
@@ -744,40 +886,99 @@ async function inspectVideo(file, frameAt = 0) {
   } finally {
     media.removeAttribute('src');
     media.load();
-    URL.revokeObjectURL(localUrl);
+    if (typeof file !== 'string') URL.revokeObjectURL(localUrl);
   }
 }
 
 $('video-picker').onchange = async event => {
   const files = Array.from(event.target.files);
   event.target.value = '';
-  if (!files.length || importBusy || !ready) return;
+  if (files.length) await importVideos(files.map(file => ({ name: file.name, file })));
+};
+
+async function importVideos(entries) {
+  if (!ready || setBusy || importBusy || !entries.length) return;
   importBusy = true;
   $('add-videos').disabled = true;
   navigator.storage?.persist?.().catch(() => {});
   let saved = 0;
   const failures = [];
-  for (const [index, file] of files.entries()) {
-    message($('import-state'), '取り込み中 ' + (index + 1) + ' / ' + files.length + ' · ' + file.name);
+  for (const [index, entry] of entries.entries()) {
+    message($('import-state'), '登録中 ' + (index + 1) + ' / ' + entries.length + ' · ' + entry.name);
     try {
-      const media = await inspectVideo(file);
-      const video = { id: crypto.randomUUID(), file, name: file.name, caption: '', volume: 100, frame: 0, addedAt: Date.now(), ...media };
-      await addVideo(video);
+      const media = await inspectVideo(entry.source || entry.file);
+      const video = { id: crypto.randomUUID(), ...entry, caption: '', volume: 100, frame: 0, addedAt: Date.now(), ...media };
+      await setStorage.addVideo(video);
       videos.push(video);
       saved += 1;
       renderLibrary();
       renderRail();
       updatePlayer();
     } catch (error) {
+      if (entry.source) desktop.forgetSource(entry.source).catch(() => {});
       const detail = error.name === 'QuotaExceededError' ? '端末の保存容量が不足しています' : error.message;
-      failures.push(file.name + '（' + detail + '）');
+      failures.push(entry.name + '（' + detail + '）');
     }
   }
   if (saved) await persistOrder();
-  message($('import-state'), [saved ? saved + '件を端末に保存しました。' : '', ...failures].filter(Boolean).join(' '));
+  const success = desktop ? '件の元ファイルを登録しました。' : '件を端末に保存しました。';
+  message($('import-state'), [saved ? saved + success : '', ...failures].filter(Boolean).join(' '));
   importBusy = false;
   $('add-videos').disabled = false;
-};
+  renderLibrary();
+}
+
+async function importDesktopVideos() {
+  if (!ready || setBusy || importBusy) return;
+  importBusy = true;
+  $('add-videos').disabled = true;
+  let entries;
+  try {
+    entries = await desktop.chooseVideos();
+  } catch {
+    message($('import-state'), '元ファイルを選択できませんでした。');
+  } finally {
+    importBusy = false;
+    $('add-videos').disabled = false;
+  }
+  if (entries?.length) await importVideos(entries);
+}
+
+async function relinkVideo(video) {
+  if (!desktop || !ready || importBusy || clipSavePending || deletingVideos || setBusy) return;
+  importBusy = true;
+  $('add-videos').disabled = true;
+  let replacement;
+  try {
+    [replacement] = await desktop.chooseVideos(true);
+    if (!replacement) return;
+    const { duration } = await inspectVideo(replacement.source);
+    if (video.frame > duration || video.clips?.some(clip => clip.end > duration + 0.001)) {
+      throw new Error('再生区間やサムネイル位置が収まる長さの動画を選んでください。');
+    }
+    // A registration may have been removed while the replacement was being read.
+    if (!videos.includes(video)) return;
+    const before = video.source;
+    const changes = { source: replacement.source, name: replacement.name, duration };
+    await updateVideo(video.id, changes);
+    if (!videos.includes(video)) return;
+    if (current() === video) clearPlayback();
+    Object.assign(video, changes);
+    replacement = undefined;
+    desktop.forgetSource(before).catch(() => {});
+    if (edited() === video) editVideo(video);
+    renderRail();
+    updatePlayer();
+    message($('import-state'), '元ファイルの場所を更新しました。');
+  } catch (error) {
+    message($('import-state'), error.message || '元ファイルを変更できませんでした。');
+  } finally {
+    if (replacement) desktop.forgetSource(replacement.source).catch(() => {});
+    importBusy = false;
+    $('add-videos').disabled = false;
+    renderLibrary();
+  }
+}
 
 function syncFrame() {
   const duration = Number.isFinite(preview.duration) ? preview.duration : (edited()?.duration || 0);
@@ -805,7 +1006,7 @@ function editVideo(video) {
   previewFrameRate = video.previewFps ?? 30;
   $('video-editor').hidden = false;
   renderClips();
-  preview.src = urlFor(video.file);
+  preview.src = videoUrl(video);
   syncFrame();
   renderLibrary();
   $('video-editor').scrollIntoView({ block: 'nearest' });
@@ -1078,7 +1279,7 @@ $('save-clip').onclick = async () => {
   try {
     let thumbnail = draft.thumbnail;
     if (!draft.customThumbnail && (!thumbnail || draft.start !== start)) {
-      const frame = await inspectVideo(video.file, start).catch(() => null);
+      const frame = await inspectVideo(video.source || video.file, start).catch(() => null);
       thumbnail = frame?.thumbnail || undefined;
     }
     if (clipDraft !== draft || !videos.includes(video)) return;
@@ -1257,16 +1458,75 @@ function renderProjection() {
   $('projection-fullscreen-help').hidden = isIPhone;
   const desktopGuide = $('projection-guide-desktop');
   desktopGuide.hidden = isIPad || isIPhone;
-  desktopGuide.textContent = isWindows
+  desktopGuide.textContent = desktop
+    ? 'テレビを拡張ディスプレイとして接続し、上映先を選びます。操作画面は端末側に残ります。'
+    : isWindows
     ? '端末の画面で大きく見るには、上映ウィンドウの「拡大表示」を使います。テレビに映す場合は、Windowsで画面を「拡張」にし、Edgeの「ウィンドウ管理」を許可します。上映ウィンドウの「外部画面で全画面」を押すと、テレビ側への移動を確認して全画面にします。'
     : 'システムのディスプレイ設定で画面を拡張し、上映ウィンドウを外部画面へ移して「全画面」を押します。';
   const displayButton = $('projection-display');
-  displayButton.hidden = !isIPad && !canPlaceProjection();
-  displayButton.disabled = projectionDisplayBusy;
+  displayButton.hidden = !desktop && !isIPad && !canPlaceProjection();
+  displayButton.disabled = projectionDisplayBusy || Boolean(desktop && !externalProjection && !$('desktop-display').value);
+  $('desktop-display-row').hidden = !desktop;
   displayButton.textContent = externalProjection
     ? '上映画面をこの画面に戻す'
     : '上映画面を別のディスプレイに全画面表示する';
 }
+
+async function refreshDesktopDisplays() {
+  const request = ++desktopDisplayRequest;
+  const picker = $('desktop-display');
+  const previous = picker.value;
+  const displays = await desktop.displays().catch(() => []);
+  if (request !== desktopDisplayRequest) return;
+  picker.replaceChildren();
+  for (const display of displays) {
+    picker.add(new Option(display.name + ' · ' + display.width + '×' + display.height, display.id));
+  }
+  if (displays.some(display => display.id === previous)) picker.value = previous;
+  if (!displays.length) picker.add(new Option('拡張ディスプレイが見つかりません', ''));
+  picker.disabled = !displays.length;
+  renderProjection();
+}
+
+async function toggleDesktopProjection() {
+  if (projectionDisplayBusy) return;
+  projectionDisplayBusy = true;
+  renderProjection();
+  try {
+    if (externalProjection) {
+      const popup = projectionWindow;
+      await desktop.returnProjection();
+      if (popup !== projectionWindow) return;
+      popup.document.body.classList.remove('desktop-projected');
+      externalProjection = undefined;
+      message($('projection-status'), '上映画面を端末側に戻しました。');
+      return;
+    }
+
+    const destination = $('desktop-display').value;
+    if (!destination) return;
+    const connection = openProjection(true);
+    const popup = projectionWindow;
+    if (!await connection || popup !== projectionWindow) return;
+    popup.document.body.classList.add('desktop-projected');
+    const placed = await desktop.placeProjection(destination).catch(() => false);
+    if (popup !== projectionWindow) return;
+    if (!placed) {
+      popup.document.body.classList.remove('desktop-projected');
+      message($('projection-status'), '上映先に移動できません。ディスプレイを拡張しているか確認してください。');
+      return;
+    }
+    externalProjection = true;
+    message($('projection-status'), '選んだディスプレイに上映しています。');
+  } catch {
+    message($('projection-status'), '上映画面を切り替えられませんでした。');
+  } finally {
+    projectionDisplayBusy = false;
+    renderProjection();
+  }
+}
+
+if (desktop) desktop.onDisplaysChanged(() => { if (activeTab === 'projection') refreshDesktopDisplays(); });
 
 function switchPlaybackTarget(video, position) {
   if (output === video) return;
@@ -1284,7 +1544,7 @@ function switchPlaybackTarget(video, position) {
   wirePlayback(player, true);
   const selected = current();
   if (selected) {
-    player.src = urlFor(selected.file);
+    player.src = videoUrl(selected);
     player.load();
     startAt(position, false);
     applyVolume(player, selected.volume);
@@ -1383,6 +1643,7 @@ function placeProjectionWindow(popup, display, width, height) {
 }
 
 $('projection-display').onclick = async () => {
+  if (desktop) return toggleDesktopProjection();
   if (projectionDisplayBusy) return;
   if (isIPad && !canPlaceProjection()) {
     if (await openProjection(true)) {
@@ -1887,6 +2148,7 @@ $('image-picker').onchange = async event => {
   const file = event.target.files[0];
   event.target.value = '';
   if (!file) return;
+  importingImages += 1;
   const image = new Image();
   const url = URL.createObjectURL(file);
   image.src = url;
@@ -1896,11 +2158,18 @@ $('image-picker').onchange = async event => {
   } catch {
     alert('この画像形式は表示できません。PNGまたはJPEGでお試しください。');
   } finally {
+    importingImages -= 1;
     URL.revokeObjectURL(url);
   }
 };
 
 async function prepareOffline() {
+  if (desktop) {
+    $('offline-state').textContent = '元ファイルを端末から直接再生します';
+    $('web-update-help').hidden = true;
+    $('projection-fullscreen-help').hidden = true;
+    return;
+  }
   if (location.protocol === 'file:') {
     $('offline-state').textContent = 'ローカルファイルとして開いています';
     return;
@@ -1928,34 +2197,47 @@ async function prepareOffline() {
   }
 }
 
-async function start() {
-  $('add-videos').disabled = true;
-  $('add-object').disabled = true;
-  try {
-    const [entries, savedLayout, savedObjects, order, savedTileOrder] = await Promise.all([
-      readVideos(), readPreference('layout'), readPreference('decorations'), readPreference('order'), readPreference('tileOrder'),
-    ]);
-    const positions = new Map((order || []).map((id, index) => [id, index]));
-    videos = entries.sort((a, b) => {
-      const orderDifference = (positions.get(a.id) ?? entries.length) - (positions.get(b.id) ?? entries.length);
-      return orderDifference || (a.addedAt ?? 0) - (b.addedAt ?? 0);
-    });
-    layout = loadLayout(savedLayout);
-    tileOrder = savedTileOrder || [];
-    decorations = savedObjects || [];
-    ready = true;
-    $('add-videos').disabled = false;
-    $('add-object').disabled = false;
-  } catch {
-    message($('import-state'), '端末の保存領域を開けませんでした。通常のブラウズ環境で開き直してください。');
-    notify('端末の保存領域を開けませんでした。');
-  }
+function applySet({ videos: entries, layout: savedLayout, decorations: savedObjects, order, tileOrder: savedTileOrder }) {
+  const positions = new Map((order || []).map((id, index) => [id, index]));
+  videos = entries.sort((a, b) => {
+    const orderDifference = (positions.get(a.id) ?? entries.length) - (positions.get(b.id) ?? entries.length);
+    return orderDifference || (a.addedAt ?? 0) - (b.addedAt ?? 0);
+  });
+  layout = loadLayout(savedLayout);
+  tileOrder = savedTileOrder || [];
+  decorations = savedObjects || [];
+}
+
+function refreshSetScreen() {
   renderRail();
   renderLibrary();
   renderLayoutSettings();
   renderLayout();
   renderObjects();
   updatePlayer();
+}
+
+async function start() {
+  $('add-videos').disabled = true;
+  $('add-object').disabled = true;
+  try {
+    const [sets, selected] = await Promise.all([readSets(), readActiveSet()]);
+    savedSets = sets;
+    activeSetId = sets.some(set => set.id === selected) ? selected : defaultSet.id;
+    setStorage = openSet(activeSetId);
+    applySet(await setStorage.read());
+    ready = true;
+    $('add-videos').disabled = false;
+    $('add-object').disabled = false;
+  } catch (error) {
+    const text = error.message?.startsWith('別のタブ') ? error.message
+      : '端末の保存領域を開けませんでした。通常のブラウズ環境で開き直してください。';
+    message($('import-state'), text);
+    message($('set-status'), text);
+    notify(text);
+  }
+  refreshSetScreen();
+  renderSets();
   prepareOffline();
 }
 window.addEventListener('resize', () => {
